@@ -1,29 +1,28 @@
-# CoC Donation Bot
+# CoC Bot
 
-An automated Clash of Clans donation bot built with Python, ADB, and OpenCV for **educational purposes only**.
+An automated Clash of Clans bot built with Python, ADB, and OpenCV for **educational purposes only**.
 
 > ⚠️ **Disclaimer**: This project is made strictly for educational purposes to learn about computer vision, template matching, and Android automation. Using bots in Clash of Clans violates Supercell's Terms of Service and may result in a ban. Use at your own risk.
 
 ## How It Works
 
-The bot connects to an Android device via ADB, takes screenshots, and uses OpenCV template matching to detect UI elements on screen. It then simulates taps to navigate the game and donate troops to clan chat requests.
+The bot connects to an Android device via ADB, takes screenshots, and uses OpenCV template matching to detect UI elements on screen. It simulates taps to automate donations, resource collection, and attacks.
 
 **Core technologies:**
 - **ADB (Android Debug Bridge)** — controls the Android device over USB
 - **OpenCV** — image processing and template matching
-- **Flask** — web dashboard for remote control
+- **Flask + SocketIO** — web dashboard for remote control with live view
 - **Python** — glue logic and automation loop
 
 ## Features
 
-- Automatically opens clan chat
-- Detects donation requests
-- Donates configured troops
-- Web dashboard with live stats and screenshots
-- Start/stop bot remotely from any browser
-- Donation history and per-hour stats
+- **Donate Mode** — opens clan chat and donates troops automatically
+- **Collect Mode** — taps ready resource collectors on the home screen
+- **Attack Mode** — searches for bases, deploys troops, and collects results
+- **Strategy Recorder** — record your attack taps and replay them
+- **Web Dashboard** — control and monitor from any browser with 1 FPS live view
+- **Anti-ban** — periodic relog cycle (3-4 min) to avoid detection
 - Runs headless on a Raspberry Pi
-- Graceful shutdown with Ctrl+C
 
 ## Requirements
 
@@ -54,9 +53,31 @@ You should see your device listed.
 The bot needs template images from your specific device. With CoC open, capture each template:
 
 ```bash
+# UI elements
 python3 tools/capture_template.py templates/ui/chat_button.png
+python3 tools/capture_template.py templates/ui/attack_button.png
+python3 tools/capture_template.py templates/ui/home_button.png
+
+# Donation
 python3 tools/capture_template.py templates/donations/donate_button.png
 python3 tools/capture_template.py templates/donations/troop_slots/archer_slot.png
+
+# Collectors
+python3 tools/capture_template.py templates/collectors/gold_mine_ready.png
+python3 tools/capture_template.py templates/collectors/elixir_collector_ready.png
+
+# Attack
+python3 tools/capture_template.py templates/attack/find_match_button.png
+python3 tools/capture_template.py templates/attack/confirm_attack_button.png
+python3 tools/capture_template.py templates/attack/return_home_button.png
+
+# State indicators
+python3 tools/capture_template.py templates/state/home_indicator.png
+python3 tools/capture_template.py templates/state/battle_indicator.png
+python3 tools/capture_template.py templates/state/results_indicator.png
+
+# Troops
+python3 tools/capture_template.py templates/troops/barbarian.png
 ```
 
 Draw a tight rectangle around each UI element when prompted.
@@ -71,17 +92,17 @@ python3 tools/test_match.py templates/ui/chat_button.png 0.6
 
 ### 5. Run the bot
 
-**Without web dashboard:**
-```bash
-python3 main.py
-```
-
-**With web dashboard:**
+**With web dashboard (recommended):**
 ```bash
 python3 main.py --web --port 8080
 ```
 
-Then open `http://localhost:8080` in your browser.
+Then open `http://localhost:8080` in your browser and use the Donate/Collect/Attack buttons.
+
+**Without web dashboard:**
+```bash
+python3 main.py
+```
 
 **Options:**
 - `--web` — start with web dashboard
@@ -94,11 +115,11 @@ Then open `http://localhost:8080` in your browser.
 
 The web dashboard lets you control and monitor the bot from any browser on your network.
 
-- **Live screenshot** of the game
-- **Start/Stop** the bot remotely
-- **Donation stats** — total donations, donations per hour
-- **Donation history** — last 50 donations with timestamps
-- **Device info** — connection status and resolution
+- **Live View** — 1 FPS live screenshot of the game
+- **Mode Selection** — Donate, Collect, or Attack with separate buttons
+- **Stats** — donations, collections, attacks tracked in real time
+- **Strategy Recorder** — record and save attack strategies
+- **Device Info** — connection status and resolution
 
 Access it at `http://<device-ip>:8080` from any device on the same network.
 
@@ -134,16 +155,22 @@ Then control the bot from any browser at `http://<pi-ip>:8080`.
 │   ├── adb_controller.py    # ADB device communication
 │   ├── state_machine.py     # Game state detection
 │   └── actions/
-│       └── donator.py       # Donation logic
+│       ├── donator.py       # Donation logic
+│       ├── collector.py     # Resource collection
+│       ├── attacker.py      # Attack logic & troop deployment
+│       └── strategy_recorder.py  # Record & replay attacks
+├── strategies/              # Saved attack strategies (JSON)
 ├── web/
 │   ├── app.py               # Flask web dashboard
 │   ├── static/              # CSS
 │   └── templates/           # HTML templates
 ├── templates/               # Template images (device-specific)
-│   ├── ui/
-│   ├── donations/
-│   ├── collectors/
-│   └── state/
+│   ├── ui/                  # Buttons (chat, attack, home)
+│   ├── donations/           # Donate button & troop slots
+│   ├── collectors/          # Ready collector icons
+│   ├── attack/              # Attack flow buttons
+│   ├── troops/              # Troop icons for deployment
+│   └── state/               # State detection indicators
 └── tools/
     ├── capture_template.py  # Template capture tool
     └── test_match.py        # Template testing tool
@@ -155,7 +182,7 @@ Then control the bot from any browser at `http://<pi-ip>:8080`.
 - **Android Automation** — controlling devices with ADB
 - **State Machines** — detecting and managing game states
 - **Image Processing** — screenshot capture, scaling, and comparison
-- **Web Development** — Flask dashboard with live updates
+- **Web Development** — Flask + SocketIO dashboard with live updates
 - **Networking** — remote device control over LAN
 
 ## License
