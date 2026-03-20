@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CoC Donation Bot</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>CoC Donation Bot</h1>
+            <div class="status-bar">
+                <span id="bot-status" class="badge stopped">STOPPED</span>
+                <span id="device-status" class="badge disconnected">DEVICE: --</span>
+            </div>
+        </header>
+
+        <div class="grid">
+            <!-- Control Panel -->
+            <div class="card">
+                <h2>Control</h2>
+                <div class="control-buttons">
+                    <button id="btn-start" class="btn btn-start" onclick="startBot()">START</button>
+                    <button id="btn-stop" class="btn btn-stop" onclick="stopBot()" disabled>STOP</button>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="card">
+                <h2>Stats</h2>
+                <div class="stats-grid">
+                    <div class="stat">
+                        <span class="stat-value" id="stat-donated">0</span>
+                        <span class="stat-label">Donations</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="stat-uptime">0:00</span>
+                        <span class="stat-label">Uptime</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="stat-dph">0</span>
+                        <span class="stat-label">Per Hour</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="stat-resolution">--</span>
+                        <span class="stat-label">Resolution</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Screenshot -->
+            <div class="card card-wide">
+                <h2>Live View <button class="btn btn-small" onclick="refreshScreenshot()">Refresh</button></h2>
+                <div class="screenshot-container">
+                    <img id="screenshot" src="" alt="No screenshot available">
+                    <div id="screenshot-placeholder">No screenshot — start the bot or click Refresh</div>
+                </div>
+            </div>
+
+            <!-- Donation History -->
+            <div class="card">
+                <h2>Donation History</h2>
+                <div class="history-container" id="history-container">
+                    <table id="history-table">
+                        <thead><tr><th>Time</th><th>Troop</th></tr></thead>
+                        <tbody id="history-body">
+                            <tr><td colspan="2" class="empty">No donations yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="card card-wide">
+                <h2>Logs</h2>
+                <div class="logs-container" id="logs-container">
+                    <pre id="logs-output">Waiting for logs...</pre>
+                </div>
+            </div>
+
+            <!-- Config Editor -->
+            <div class="card card-wide">
+                <h2>Config <button class="btn btn-small btn-save" onclick="saveConfig()">Save</button></h2>
+                <textarea id="config-editor" spellcheck="false"></textarea>
+                <div id="config-status" class="config-status"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let logsOutput = document.getElementById('logs-output');
+        let logsContainer = document.getElementById('logs-container');
+
+        // Socket events
+        socket.on('stats', (data) => {
+            updateStats(data);
+        });
+
+        socket.on('screenshot', (data) => {
+            showScreenshot(data.image);
+        });
+
+        socket.on('log', (data) => {
+            appendLog(data.message);
+        });
+
+        socket.on('connect', () => {
+            appendLog('[WEB] Connected to server');
+            loadConfig();
+            loadLogs();
+        });
+
+        // API calls
+        async function startBot() {
+            const res = await fetch('/api/start', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'started') {
+                appendLog('[WEB] Bot started');
+            }
+        }
+
+        async function stopBot() {
+            const res = await fetch('/api/stop', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'stopped') {
+                appendLog('[WEB] Bot stop requested');
+            }
+        }
+
+        async function refreshScreenshot() {
+            try {
+                const res = await fetch('/api/screenshot');
+                const data = await res.json();
+                if (data.image) {
+                    showScreenshot(data.image);
+                }
+            } catch (e) {
+                appendLog('[WEB] Screenshot failed: ' + e.message);
+            }
+        }
+
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const data = await res.json();
+                document.getElementById('config-editor').value = data.config;
+            } catch (e) {}
+        }
+
+        async function saveConfig() {
+            const configText = document.getElementById('config-editor').value;
+            const statusEl = document.getElementById('config-status');
+            try {
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ config: configText }),
+                });
+                const data = await res.json();
+                if (data.status === 'saved') {
+                    statusEl.textContent = 'Config saved!';
+                    statusEl.className = 'config-status success';
+                } else {
+                    statusEl.textContent = 'Error: ' + data.error;
+                    statusEl.className = 'config-status error';
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e.message;
+                statusEl.className = 'config-status error';
+            }
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        }
+
+        async function loadLogs() {
+            try {
+                const res = await fetch('/api/logs');
+                const data = await res.json();
+                if (data.logs && data.logs.length > 0) {
+                    logsOutput.textContent = data.logs.join('\n');
+                    logsContainer.scrollTop = logsContainer.scrollHeight;
+                }
+            } catch (e) {}
+        }
+
+        // UI updates
+        function updateStats(data) {
+            // Status badge
+            const statusEl = document.getElementById('bot-status');
+            statusEl.textContent = data.status.toUpperCase();
+            statusEl.className = 'badge ' + data.status;
+
+            // Device badge
+            const deviceEl = document.getElementById('device-status');
+            deviceEl.textContent = data.device_connected ? 'DEVICE: OK' : 'DEVICE: --';
+            deviceEl.className = 'badge ' + (data.device_connected ? 'connected' : 'disconnected');
+
+            // Buttons
+            document.getElementById('btn-start').disabled = data.running;
+            document.getElementById('btn-stop').disabled = !data.running;
+
+            // Stats
+            document.getElementById('stat-donated').textContent = data.total_donated;
+            document.getElementById('stat-uptime').textContent = formatUptime(data.uptime_seconds);
+            document.getElementById('stat-dph').textContent = data.donations_per_hour;
+            document.getElementById('stat-resolution').textContent = data.device_resolution
+                ? data.device_resolution[0] + 'x' + data.device_resolution[1] : '--';
+
+            // Donation history
+            updateHistory(data.donation_history);
+        }
+
+        function showScreenshot(base64img) {
+            const img = document.getElementById('screenshot');
+            const placeholder = document.getElementById('screenshot-placeholder');
+            img.src = 'data:image/jpeg;base64,' + base64img;
+            img.style.display = 'block';
+            placeholder.style.display = 'none';
+        }
+
+        function appendLog(msg) {
+            const lines = logsOutput.textContent.split('\n');
+            if (lines.length > 200) {
+                lines.splice(0, lines.length - 200);
+            }
+            lines.push(msg);
+            logsOutput.textContent = lines.join('\n');
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+        }
+
+        function updateHistory(history) {
+            const tbody = document.getElementById('history-body');
+            if (!history || history.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" class="empty">No donations yet</td></tr>';
+                return;
+            }
+            // Show last 20 donations, newest first
+            const recent = history.slice(-20).reverse();
+            tbody.innerHTML = recent.map(h => {
+                const t = new Date(h.time);
+                const timeStr = t.toLocaleTimeString();
+                return `<tr><td>${timeStr}</td><td>${h.troop}</td></tr>`;
+            }).join('');
+        }
+
+        function formatUptime(seconds) {
+            if (!seconds) return '0:00';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+            return `${m}:${String(s).padStart(2,'0')}`;
+        }
+    </script>
+</body>
+</html>
