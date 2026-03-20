@@ -12,6 +12,10 @@ from bot.vision import Vision
 from bot.config_loader import Config
 from bot.actions.collector import Collector
 from bot.actions.donator import Donator
+from bot.actions.attacker import Attacker
+from bot.actions.navigator import Navigator
+from bot.actions.strategy_recorder import StrategyRecorder
+from bot.state_machine import StateMachine, GameState
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +34,12 @@ class Bot:
         threshold = config.vision.default_threshold if hasattr(config.vision, "default_threshold") else 0.80
         self.vision = Vision(templates_dir="templates", default_threshold=threshold)
 
+        self.state_machine = StateMachine(self.vision)
+        self.navigator = Navigator(self.adb, self.vision, self.state_machine)
         self.donator = Donator(self.adb, self.vision, config)
         self.collector = Collector(self.adb, self.vision, config)
+        self.attacker = Attacker(self.adb, self.vision, self.navigator, config)
+        self.strategy_recorder = StrategyRecorder(self.adb)
 
         self._start_time = None
         self._adb_fail_count = 0
@@ -42,7 +50,8 @@ class Bot:
         self._last_collect_time = 0
         self._collect_interval = 120  # collect every 2 minutes
         self.collecting_enabled = True  # can be toggled from web UI
-        self._mode = "donate"  # "donate" or "collect"
+        self._mode = "donate"  # "donate", "collect", or "attack"
+        self._attack_searching = False
         self._relog_interval = None  # set randomly each cycle
         self._coc_package = "com.supercell.clashofclans"
 
@@ -118,6 +127,13 @@ class Bot:
                         # Collect-only mode
                         logger.info("Checking for ready collectors...")
                         self.collector.collect(screen)
+                        self._sleep_interruptible(donate_interval)
+
+                    elif self._mode == "attack":
+                        # Attack mode — runs a full cycle (search, battle, return)
+                        self._run_attack_cycle(screen)
+                        continue  # skip the sleep at the end, cycle has its own timing
+
                     else:
                         # Donate mode (with optional collecting)
                         if self.collecting_enabled and time.time() - self._last_collect_time >= self._collect_interval:
@@ -134,8 +150,8 @@ class Bot:
                         else:
                             logger.debug("No donations made, checking again in %ds", donate_interval)
 
-                    # Wait before next cycle
-                    self._sleep_interruptible(donate_interval)
+                        # Wait before next cycle
+                        self._sleep_interruptible(donate_interval)
 
                 except Exception as e:
                     logger.error("Error: %s", e, exc_info=True)
@@ -177,6 +193,7 @@ class Bot:
             "donations_per_hour": round(dph, 1),
             "donation_history": self.donator.donation_history[-50:],
             "total_collected": self.collector.total_collected,
+            "total_attacks": self.attacker.attack_count,
             "collecting_enabled": self.collecting_enabled,
             "device_connected": connected,
             "device_resolution": resolution,
@@ -199,6 +216,90 @@ class Bot:
 
         _, buf = cv2.imencode(".jpg", screen, [cv2.IMWRITE_JPEG_QUALITY, 60])
         return base64.b64encode(buf).decode("utf-8")
+
+    def _run_attack_cycle(self, screen):
+        """Run one full attack cycle: search, evaluate bases, battle, return home."""
+        # Check max attacks safety limit
+        max_attacks = self.config.safety.max_attacks if hasattr(self.config.safety, "max_attacks") else 50
+        if self.attacker.attack_count >= max_attacks:
+            logger.info("Max attacks reached (%d), stopping.", max_attacks)
+            self.running = False
+            return
+
+        # Step 1: Start search from home
+        logger.info("Starting attack #%d", self.attacker.attack_count + 1)
+        if not self.attacker.start_search():
+            logger.warning("Failed to start search, retrying in 10s")
+            self._sleep_interruptible(10)
+            return
+
+        # Step 2: Wait for matchmaking (10 seconds)
+        logger.info("Waiting 10s for matchmaking...")
+        self._sleep_interruptible(10)
+        if not self.running:
+            return
+
+        # Step 3: Evaluate bases — keep pressing Next until we find a good one
+        found = False
+        while self.running and not found:
+            screen = self.adb.screenshot()
+            if screen is None:
+                self._sleep_interruptible(3)
+                continue
+
+            with self._lock:
+                self._last_screen = screen
+
+            # Check if next button exists (means we're on search screen)
+            next_match = self.vision.find_template(screen, "attack/next_button.png")
+            if next_match:
+                found = self.attacker.evaluate_base(screen)
+                if not found:
+                    self._sleep_interruptible(2)  # wait for next base to load
+            else:
+                # Might have been matched already or something went wrong
+                logger.warning("Next button not found, checking for return home")
+                return_match = self.vision.find_template(screen, "attack/return_home_button.png")
+                if return_match:
+                    # Battle ended somehow
+                    self.adb.tap(return_match[0], return_match[1], scale=False)
+                    self._sleep_interruptible(5)
+                    return
+                self._sleep_interruptible(2)
+
+        if not self.running:
+            return
+
+        # Step 4: Battle in progress — wait for it to end
+        logger.info("Troops deployed! Monitoring battle...")
+        while self.running:
+            self._sleep_interruptible(3)
+            screen = self.adb.screenshot()
+            if screen is None:
+                continue
+
+            with self._lock:
+                self._last_screen = screen
+
+            # Check for return home button (battle ended)
+            return_match = self.vision.find_template(screen, "attack/return_home_button.png")
+            if return_match:
+                logger.info("Battle ended, returning home")
+                if not self.config.safety.dry_run:
+                    self.adb.tap(return_match[0], return_match[1], scale=False)
+                self._sleep_interruptible(5)
+
+                # Tap through results screen
+                screen = self.adb.screenshot()
+                if screen is not None:
+                    self.attacker.collect_results(screen)
+                break
+
+        # Step 5: Cooldown before next attack
+        if self.running:
+            attack_cooldown = self.config.timing.action_cooldown.attack if hasattr(self.config.timing.action_cooldown, "attack") else 10
+            logger.info("Attack complete. Waiting %ds before next attack.", attack_cooldown)
+            self._sleep_interruptible(attack_cooldown)
 
     def _relog(self):
         """Close and reopen CoC to avoid detection."""

@@ -24,6 +24,7 @@
                 <div class="control-buttons">
                     <button id="btn-donate" class="btn btn-start" onclick="startBot('donate')">DONATE</button>
                     <button id="btn-collect" class="btn btn-collect" onclick="startBot('collect')">COLLECT</button>
+                    <button id="btn-attack" class="btn btn-attack" onclick="startBot('attack')">ATTACK</button>
                     <button id="btn-stop" class="btn btn-stop" onclick="stopBot()" disabled>STOP</button>
                 </div>
                 <div id="mode-indicator" class="mode-indicator"></div>
@@ -50,6 +51,10 @@
                         <span class="stat-label">Collected</span>
                     </div>
                     <div class="stat">
+                        <span class="stat-value" id="stat-attacks">0</span>
+                        <span class="stat-label">Attacks</span>
+                    </div>
+                    <div class="stat">
                         <span class="stat-value" id="stat-resolution">--</span>
                         <span class="stat-label">Resolution</span>
                     </div>
@@ -59,9 +64,10 @@
             <!-- Live Screenshot -->
             <div class="card card-wide">
                 <h2>Live View <button class="btn btn-small" onclick="refreshScreenshot()">Refresh</button></h2>
-                <div class="screenshot-container">
-                    <img id="screenshot" src="" alt="No screenshot available">
+                <div class="screenshot-container" id="screenshot-wrapper">
+                    <img id="screenshot" src="" alt="No screenshot available" onclick="onScreenshotClick(event)">
                     <div id="screenshot-placeholder">No screenshot — start the bot or click Refresh</div>
+                    <div id="recording-badge" class="recording-badge" style="display:none;">REC</div>
                 </div>
             </div>
 
@@ -76,6 +82,25 @@
                         </tbody>
                     </table>
                 </div>
+            </div>
+
+            <!-- Strategy Recorder -->
+            <div class="card">
+                <h2>Strategy Recorder</h2>
+                <div class="strategy-controls">
+                    <input type="text" id="strategy-name" placeholder="Strategy name" value="default" class="strategy-input">
+                    <div class="control-buttons" style="margin-top: 10px;">
+                        <button id="btn-record" class="btn btn-record" onclick="startRecording()">RECORD</button>
+                        <button id="btn-stop-record" class="btn btn-stop" onclick="stopRecording()" disabled>STOP</button>
+                    </div>
+                </div>
+                <div style="margin-top: 10px;">
+                    <label style="font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px;">Use for auto-attack:</label>
+                    <select id="strategy-select" class="strategy-input" onchange="setActiveStrategy()" style="margin-top: 4px;">
+                        <option value="">Default (spread deploy)</option>
+                    </select>
+                </div>
+                <div id="strategy-list" class="strategy-list" style="margin-top: 12px;"></div>
             </div>
 
             <!-- Logs -->
@@ -210,12 +235,14 @@
             // Buttons
             document.getElementById('btn-donate').disabled = data.running;
             document.getElementById('btn-collect').disabled = data.running;
+            document.getElementById('btn-attack').disabled = data.running;
             document.getElementById('btn-stop').disabled = !data.running;
 
             // Mode indicator
             const modeEl = document.getElementById('mode-indicator');
             if (data.running) {
-                modeEl.textContent = 'Mode: ' + (data.mode === 'collect' ? 'COLLECTING' : 'DONATING');
+                const modeLabels = { 'collect': 'COLLECTING', 'donate': 'DONATING', 'attack': 'ATTACKING' };
+                modeEl.textContent = 'Mode: ' + (modeLabels[data.mode] || data.mode.toUpperCase());
                 modeEl.className = 'mode-indicator active';
             } else {
                 modeEl.textContent = '';
@@ -227,6 +254,7 @@
             document.getElementById('stat-uptime').textContent = formatUptime(data.uptime_seconds);
             document.getElementById('stat-dph').textContent = data.donations_per_hour;
             document.getElementById('stat-collected').textContent = data.total_collected || 0;
+            document.getElementById('stat-attacks').textContent = data.total_attacks || 0;
             document.getElementById('stat-resolution').textContent = data.device_resolution
                 ? data.device_resolution[0] + 'x' + data.device_resolution[1] : '--';
 
@@ -266,6 +294,112 @@
                 return `<tr><td>${timeStr}</td><td>${h.troop}</td></tr>`;
             }).join('');
         }
+
+        // Strategy recorder
+        let isRecording = false;
+
+        async function startRecording() {
+            const res = await fetch('/api/strategy/record/start', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'recording') {
+                isRecording = true;
+                document.getElementById('btn-record').disabled = true;
+                document.getElementById('btn-stop-record').disabled = false;
+                document.getElementById('recording-badge').style.display = 'block';
+                appendLog('[WEB] Recording — click on the live screenshot to place taps!');
+                // Start refreshing screenshot faster during recording
+                refreshScreenshot();
+            }
+        }
+
+        async function stopRecording() {
+            const name = document.getElementById('strategy-name').value || 'default';
+            const res = await fetch('/api/strategy/record/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name }),
+            });
+            const data = await res.json();
+            isRecording = false;
+            document.getElementById('btn-record').disabled = false;
+            document.getElementById('btn-stop-record').disabled = true;
+            document.getElementById('recording-badge').style.display = 'none';
+            if (data.status === 'saved') {
+                appendLog('[WEB] Strategy "' + name + '" saved!');
+                loadStrategies();
+            } else {
+                appendLog('[WEB] Failed to save: ' + (data.error || 'unknown'));
+            }
+        }
+
+        async function onScreenshotClick(event) {
+            if (!isRecording) return;
+            const img = document.getElementById('screenshot');
+            const rect = img.getBoundingClientRect();
+            // Convert click position to device coordinates
+            const scaleX = img.naturalWidth / rect.width;
+            const scaleY = img.naturalHeight / rect.height;
+            const x = Math.round((event.clientX - rect.left) * scaleX);
+            const y = Math.round((event.clientY - rect.top) * scaleY);
+
+            await fetch('/api/strategy/tap', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ x: x, y: y }),
+            });
+            // Refresh screenshot to see the result
+            setTimeout(refreshScreenshot, 500);
+        }
+
+        async function replayStrategy(name) {
+            appendLog('[WEB] Replaying strategy "' + name + '"...');
+            const res = await fetch('/api/strategy/replay', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name }),
+            });
+            const data = await res.json();
+            appendLog('[WEB] Replay ' + data.status);
+        }
+
+        async function loadStrategies() {
+            try {
+                const res = await fetch('/api/strategy/list');
+                const data = await res.json();
+                const container = document.getElementById('strategy-list');
+                if (!data.strategies || data.strategies.length === 0) {
+                    container.innerHTML = '<div class="empty-strategies">No strategies saved</div>';
+                    return;
+                }
+                // Update list
+                container.innerHTML = data.strategies.map(s =>
+                    `<div class="strategy-item">
+                        <span class="strategy-name">${s.name}</span>
+                        <span class="strategy-info">${s.events} taps, ${s.duration}s</span>
+                        <button class="btn btn-small" onclick="replayStrategy('${s.name}')">Replay</button>
+                    </div>`
+                ).join('');
+                // Update dropdown
+                const select = document.getElementById('strategy-select');
+                const current = select.value;
+                select.innerHTML = '<option value="">Default (spread deploy)</option>' +
+                    data.strategies.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+                select.value = current;
+            } catch (e) {}
+        }
+
+        async function setActiveStrategy() {
+            const name = document.getElementById('strategy-select').value;
+            await fetch('/api/strategy/active', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name }),
+            });
+            appendLog('[WEB] Active strategy: ' + (name || 'default'));
+        }
+
+        // Load strategies on connect
+        socket.on('connect', () => { loadStrategies(); });
 
         function formatUptime(seconds) {
             if (!seconds) return '0:00';

@@ -148,6 +148,65 @@ def api_logs():
     return jsonify({"logs": log_buffer[-100:]})
 
 
+@app.route("/api/strategy/record/start", methods=["POST"])
+def api_strategy_record_start():
+    if bot is None:
+        return jsonify({"error": "Bot not initialized"}), 500
+    bot.strategy_recorder.start_recording()
+    return jsonify({"status": "recording"})
+
+
+@app.route("/api/strategy/record/stop", methods=["POST"])
+def api_strategy_record_stop():
+    if bot is None:
+        return jsonify({"error": "Bot not initialized"}), 500
+    name = request.json.get("name", "default") if request.is_json else "default"
+    filepath = bot.strategy_recorder.stop_recording(name)
+    if filepath:
+        return jsonify({"status": "saved", "name": name, "path": filepath})
+    return jsonify({"error": "No events recorded"}), 400
+
+
+@app.route("/api/strategy/list")
+def api_strategy_list():
+    from bot.actions.strategy_recorder import StrategyRecorder
+    return jsonify({"strategies": StrategyRecorder.list_strategies()})
+
+
+@app.route("/api/strategy/tap", methods=["POST"])
+def api_strategy_tap():
+    """Record a tap during strategy recording, and also send it to the device."""
+    if bot is None:
+        return jsonify({"error": "Bot not initialized"}), 500
+    if not bot.strategy_recorder.is_recording:
+        return jsonify({"error": "Not recording"}), 400
+    x = request.json.get("x", 0)
+    y = request.json.get("y", 0)
+    bot.strategy_recorder.add_tap(x, y)
+    # Also send the tap to the device so you can see it happen
+    bot.adb.tap(x, y, scale=False)
+    return jsonify({"status": "tapped", "x": x, "y": y})
+
+
+@app.route("/api/strategy/active", methods=["POST"])
+def api_strategy_active():
+    if bot is None:
+        return jsonify({"error": "Bot not initialized"}), 500
+    name = request.json.get("name", "") if request.is_json else ""
+    bot.attacker.strategy_name = name if name else None
+    logger.info("Active attack strategy: %s", name or "default")
+    return jsonify({"status": "set", "name": name})
+
+
+@app.route("/api/strategy/replay", methods=["POST"])
+def api_strategy_replay():
+    if bot is None:
+        return jsonify({"error": "Bot not initialized"}), 500
+    name = request.json.get("name", "default") if request.is_json else "default"
+    success = bot.strategy_recorder.replay(name)
+    return jsonify({"status": "replayed" if success else "failed"})
+
+
 # ---------- SocketIO background tasks ----------
 
 def background_stats_emitter():
@@ -162,9 +221,9 @@ def background_stats_emitter():
 
 
 def background_screenshot_emitter():
-    """Push screenshot to all clients every 5 seconds."""
+    """Push screenshot to all clients every second."""
     while True:
-        socketio.sleep(5)
+        socketio.sleep(1)
         if bot and bot.running:
             try:
                 img = bot.get_screenshot_base64()
