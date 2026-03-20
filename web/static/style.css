@@ -143,6 +143,30 @@ header h1 {
     background: #2a4a6a;
 }
 
+.btn-toggle {
+    padding: 10px 24px;
+    font-size: 13px;
+    flex: 1;
+}
+
+.btn-toggle.on {
+    background: #1a4a1a;
+    color: #44ff44;
+}
+
+.btn-toggle.on:hover {
+    background: #2a5a2a;
+}
+
+.btn-toggle.off {
+    background: #3a2a1a;
+    color: #ffaa44;
+}
+
+.btn-toggle.off:hover {
+    background: #4a3a2a;
+}
+
 /* Stats */
 .stats-grid {
     display: grid;

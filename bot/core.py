@@ -41,6 +41,7 @@ class Bot:
         self._last_relog_time = None
         self._last_collect_time = 0
         self._collect_interval = 120  # collect every 2 minutes
+        self.collecting_enabled = True  # can be toggled from web UI
         self._relog_interval = None  # set randomly each cycle
         self._coc_package = "com.supercell.clashofclans"
 
@@ -111,8 +112,8 @@ class Bot:
                     with self._lock:
                         self._last_screen = screen
 
-                    # Collect resources every 2 minutes
-                    if time.time() - self._last_collect_time >= self._collect_interval:
+                    # Collect resources every 2 minutes (if enabled)
+                    if self.collecting_enabled and time.time() - self._last_collect_time >= self._collect_interval:
                         logger.info("Checking for ready collectors...")
                         collected = self.collector.collect(screen)
                         self._last_collect_time = time.time()
@@ -169,6 +170,7 @@ class Bot:
             "donations_per_hour": round(dph, 1),
             "donation_history": self.donator.donation_history[-50:],
             "total_collected": self.collector.total_collected,
+            "collecting_enabled": self.collecting_enabled,
             "device_connected": connected,
             "device_resolution": resolution,
         }
