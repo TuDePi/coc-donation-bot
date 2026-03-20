@@ -91,6 +91,16 @@ def api_stop():
     return jsonify({"status": "stopped"})
 
 
+@app.route("/api/collecting/toggle", methods=["POST"])
+def api_collecting_toggle():
+    if bot is None:
+        return jsonify({"error": "Bot not initialized"}), 500
+    bot.collecting_enabled = not bot.collecting_enabled
+    status = "enabled" if bot.collecting_enabled else "disabled"
+    logger.info("Resource collecting %s", status)
+    return jsonify({"collecting_enabled": bot.collecting_enabled})
+
+
 @app.route("/api/screenshot")
 def api_screenshot():
     if bot is None:

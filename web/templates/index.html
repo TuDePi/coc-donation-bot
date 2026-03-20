@@ -25,6 +25,10 @@
                     <button id="btn-start" class="btn btn-start" onclick="startBot()">START</button>
                     <button id="btn-stop" class="btn btn-stop" onclick="stopBot()" disabled>STOP</button>
                 </div>
+                <hr style="margin: 12px 0; border-color: #333;">
+                <div class="control-buttons">
+                    <button id="btn-collecting" class="btn btn-toggle on" onclick="toggleCollecting()">COLLECTING: ON</button>
+                </div>
             </div>
 
             <!-- Stats -->
@@ -42,6 +46,10 @@
                     <div class="stat">
                         <span class="stat-value" id="stat-dph">0</span>
                         <span class="stat-label">Per Hour</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="stat-collected">0</span>
+                        <span class="stat-label">Collected</span>
                     </div>
                     <div class="stat">
                         <span class="stat-value" id="stat-resolution">--</span>
@@ -130,6 +138,12 @@
             }
         }
 
+        async function toggleCollecting() {
+            const res = await fetch('/api/collecting/toggle', { method: 'POST' });
+            const data = await res.json();
+            updateCollectingButton(data.collecting_enabled);
+        }
+
         async function refreshScreenshot() {
             try {
                 const res = await fetch('/api/screenshot');
@@ -205,6 +219,8 @@
             document.getElementById('stat-donated').textContent = data.total_donated;
             document.getElementById('stat-uptime').textContent = formatUptime(data.uptime_seconds);
             document.getElementById('stat-dph').textContent = data.donations_per_hour;
+            document.getElementById('stat-collected').textContent = data.total_collected || 0;
+            updateCollectingButton(data.collecting_enabled);
             document.getElementById('stat-resolution').textContent = data.device_resolution
                 ? data.device_resolution[0] + 'x' + data.device_resolution[1] : '--';
 
@@ -243,6 +259,14 @@
                 const timeStr = t.toLocaleTimeString();
                 return `<tr><td>${timeStr}</td><td>${h.troop}</td></tr>`;
             }).join('');
+        }
+
+        function updateCollectingButton(enabled) {
+            const btn = document.getElementById('btn-collecting');
+            if (btn) {
+                btn.textContent = 'COLLECTING: ' + (enabled ? 'ON' : 'OFF');
+                btn.className = 'btn btn-toggle ' + (enabled ? 'on' : 'off');
+            }
         }
 
         function formatUptime(seconds) {
