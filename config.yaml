@@ -1,0 +1,72 @@
+# Clash of Clans Bot Configuration
+
+# Device settings
+device:
+  serial: null              # null = first connected device, or specify serial number
+  reference_resolution: [1920, 1080]
+
+# Timing (seconds)
+timing:
+  loop_delay: 1.0
+  tap_delay: [0.1, 0.3]     # random delay range between taps
+  action_cooldown:
+    collect: 300             # 5 min between collection runs
+    train: 120               # 2 min between training checks
+    donate: 180              # 3 min between donation checks
+    attack: 10               # delay after returning home before next attack
+
+# Template matching
+vision:
+  default_threshold: 0.80
+  overrides: {}              # per-template overrides, e.g. gold_mine_ready: 0.75
+
+# Resource collection
+collector:
+  enabled: false
+  collect_treasury: false
+
+# Army training
+training:
+  enabled: false
+  army:
+    barbarian: 50
+    archer: 50
+    goblin: 20
+  spells:
+    lightning: 2
+    heal: 1
+
+# Attacking / farming
+attack:
+  enabled: false
+  max_searches: 50           # give up after N nexts
+  min_loot:
+    gold: 200000
+    elixir: 200000
+    dark_elixir: 0           # 0 = don't care
+  max_trophy_target: 2500
+  deploy_strategy: "spread"  # spam_one_side, spread, surgical
+  deploy_side: "bottom"      # top, bottom, left, right
+  use_heroes: true
+  hero_deploy_delay: 5
+
+# Donations
+donations:
+  enabled: true
+  troops_to_donate:
+    - archer
+    - wizard
+  max_per_cycle: 5
+
+# Logging
+logging:
+  level: INFO
+  file: logs/bot.log
+  console: true
+
+# Safety
+safety:
+  max_runtime_hours: 8
+  max_attacks: 50
+  pause_on_shield: true
+  dry_run: false             # true = log actions without tapping

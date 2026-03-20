@@ -1,0 +1,9 @@
+logs/
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+.DS_Store
+.claude/
+screenshots/
