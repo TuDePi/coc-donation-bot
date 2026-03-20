@@ -13,6 +13,9 @@ def main():
     parser.add_argument("-c", "--config", default="config.yaml", help="Config file path")
     parser.add_argument("--dry-run", action="store_true", help="Log actions without tapping")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--web", action="store_true", help="Start with web dashboard")
+    parser.add_argument("--port", type=int, default=5000, help="Web dashboard port (default: 5000)")
+    parser.add_argument("--host", default="0.0.0.0", help="Web dashboard host (default: 0.0.0.0)")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -28,8 +31,14 @@ def main():
         console=config.logging.console,
     )
 
-    bot = Bot(config)
-    bot.run()
+    if args.web:
+        from web.app import init_app, run as run_web
+        init_app(args.config)
+        print(f"\n  Dashboard: http://localhost:{args.port}\n")
+        run_web(host=args.host, port=args.port)
+    else:
+        bot = Bot(config)
+        bot.run()
 
 
 if __name__ == "__main__":

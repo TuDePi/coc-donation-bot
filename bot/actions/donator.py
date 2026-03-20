@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import datetime
 
 from bot.adb_controller import ADBController
 from bot.vision import Vision
@@ -15,6 +16,7 @@ class Donator:
         self.vision = vision
         self.config = config
         self.total_donated = 0
+        self.donation_history = []  # list of {"time": timestamp, "troop": name}
 
     def donate(self, screen):
         """
@@ -140,6 +142,10 @@ class Donator:
                     if match:
                         self.adb.tap(match[0], match[1], scale=False)
                         logger.info("Donated: %s", troop_name)
+                        self.donation_history.append({
+                            "time": datetime.now().isoformat(),
+                            "troop": troop_name,
+                        })
                         time.sleep(0.3)
                         return True
 
