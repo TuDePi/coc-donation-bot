@@ -10,6 +10,7 @@ import cv2
 from bot.adb_controller import ADBController
 from bot.vision import Vision
 from bot.config_loader import Config
+from bot.actions.collector import Collector
 from bot.actions.donator import Donator
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class Bot:
         self.vision = Vision(templates_dir="templates", default_threshold=threshold)
 
         self.donator = Donator(self.adb, self.vision, config)
+        self.collector = Collector(self.adb, self.vision, config)
 
         self._start_time = None
         self._adb_fail_count = 0
@@ -37,6 +39,8 @@ class Bot:
         self._last_screen = None
         self._lock = threading.Lock()
         self._last_relog_time = None
+        self._last_collect_time = 0
+        self._collect_interval = 120  # collect every 2 minutes
         self._relog_interval = None  # set randomly each cycle
         self._coc_package = "com.supercell.clashofclans"
 
@@ -107,6 +111,16 @@ class Bot:
                     with self._lock:
                         self._last_screen = screen
 
+                    # Collect resources every 2 minutes
+                    if time.time() - self._last_collect_time >= self._collect_interval:
+                        logger.info("Checking for ready collectors...")
+                        collected = self.collector.collect(screen)
+                        self._last_collect_time = time.time()
+                        if collected > 0:
+                            # Wait a bit after collecting before donating
+                            self._sleep_interruptible(3)
+                            continue
+
                     donated = self.donator.donate(screen)
                     if donated > 0:
                         logger.info("Waiting %ds before next donation check", donate_interval)
@@ -154,6 +168,7 @@ class Bot:
             "total_donated": self.donator.total_donated,
             "donations_per_hour": round(dph, 1),
             "donation_history": self.donator.donation_history[-50:],
+            "total_collected": self.collector.total_collected,
             "device_connected": connected,
             "device_resolution": resolution,
         }
