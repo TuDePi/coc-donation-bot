@@ -25,11 +25,13 @@ class Vision:
         full_path = os.path.join(self.templates_dir, path) if not os.path.isabs(path) else path
         if not os.path.exists(full_path):
             logger.warning("Template not found: %s", full_path)
+            self._cache[path] = None  # cache missing so we only warn once
             return None
 
         img = cv2.imread(full_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             logger.warning("Failed to read template: %s", full_path)
+            self._cache[path] = None
             return None
 
         self._cache[path] = img

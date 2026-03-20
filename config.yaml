@@ -22,7 +22,7 @@ vision:
 
 # Resource collection
 collector:
-  enabled: false
+  enabled: true
   collect_treasury: false
 
 # Army training
@@ -38,7 +38,7 @@ training:
 
 # Attacking / farming
 attack:
-  enabled: false
+  enabled: true
   max_searches: 50           # give up after N nexts
   min_loot:
     gold: 200000
@@ -47,7 +47,7 @@ attack:
   max_trophy_target: 2500
   deploy_strategy: "spread"  # spam_one_side, spread, surgical
   deploy_side: "bottom"      # top, bottom, left, right
-  use_heroes: true
+  use_heroes: false
   hero_deploy_delay: 5
 
 # Donations
@@ -55,7 +55,6 @@ donations:
   enabled: true
   troops_to_donate:
     - archer
-    - wizard
   max_per_cycle: 5
 
 # Logging

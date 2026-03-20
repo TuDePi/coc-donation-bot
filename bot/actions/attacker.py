@@ -4,6 +4,7 @@ import time
 from bot.adb_controller import ADBController
 from bot.vision import Vision
 from bot.actions.navigator import Navigator
+from bot.actions.strategy_recorder import StrategyRecorder
 from bot.utils.regions import LOOT_GOLD, LOOT_ELIXIR, LOOT_DARK_ELIXIR
 
 logger = logging.getLogger(__name__)
@@ -19,21 +20,54 @@ class Attacker:
         self.config = config
         self.search_count = 0
         self.attack_count = 0
+        self.strategy_name = None  # set to use a recorded strategy
 
     def start_search(self):
-        """Start multiplayer matchmaking."""
+        """Start multiplayer matchmaking by tapping attack button then find match."""
         self.search_count = 0
-        if not self.navigator.open_attack():
-            logger.warning("Failed to open attack screen")
+
+        # Step 1: Find and tap the attack button on home screen
+        screen = self.adb.screenshot()
+        if screen is None:
             return False
+
+        match = self.vision.find_template(screen, "ui/attack_button.png")
+        if not match:
+            logger.warning("Attack button not found on screen")
+            return False
+
+        self.adb.tap(match[0], match[1], scale=False)
+        self.adb.random_delay(1.0, 2.0)
+
+        # Step 2: Find and tap "Find a Match"
+        screen = self.adb.screenshot()
+        if screen is None:
+            return False
+
+        match = self.vision.find_template(screen, "attack/find_match_button.png")
+        if not match:
+            logger.warning("Find Match button not found")
+            return False
+
+        self.adb.tap(match[0], match[1], scale=False)
+        self.adb.random_delay(1.0, 2.0)
+
+        # Step 3: Confirm attack on confirmation screen
+        screen = self.adb.screenshot()
+        if screen is None:
+            return False
+
+        match = self.vision.find_template(screen, "attack/confirm_attack_button.png")
+        if match:
+            self.adb.tap(match[0], match[1], scale=False)
+            self.adb.random_delay(1.0, 2.0)
+
         logger.info("Attack search started")
         return True
 
     def evaluate_base(self, screen):
         """
-        Evaluate a base during search. Either attack or press next.
-
-        Reads loot values and compares against configured thresholds.
+        Evaluate a base during search. Attacks immediately (no loot filtering).
         """
         self.search_count += 1
 
@@ -42,39 +76,9 @@ class Attacker:
             self._press_end_search(screen)
             return False
 
-        # Read loot values via OCR
-        gold = self.vision.read_number(screen, LOOT_GOLD)
-        elixir = self.vision.read_number(screen, LOOT_ELIXIR)
-        dark_elixir = self.vision.read_number(screen, LOOT_DARK_ELIXIR)
-
-        logger.info(
-            "Base #%d: Gold=%s, Elixir=%s, DE=%s",
-            self.search_count,
-            gold or "?", elixir or "?", dark_elixir or "?",
-        )
-
-        # Check against thresholds
-        min_loot = self.config.attack.min_loot
-        meets_criteria = True
-
-        if gold is not None and isinstance(min_loot, dict):
-            if gold < min_loot.get("gold", 0):
-                meets_criteria = False
-        if elixir is not None and isinstance(min_loot, dict):
-            if elixir < min_loot.get("elixir", 0):
-                meets_criteria = False
-        if dark_elixir is not None and isinstance(min_loot, dict):
-            de_min = min_loot.get("dark_elixir", 0)
-            if de_min > 0 and (dark_elixir or 0) < de_min:
-                meets_criteria = False
-
-        if meets_criteria and (gold is not None or elixir is not None):
-            logger.info("Base meets criteria! Deploying troops.")
-            self._deploy_troops(screen)
-            return True
-        else:
-            self._press_next(screen)
-            return False
+        logger.info("Base #%d — Attacking!", self.search_count)
+        self._deploy_troops(screen)
+        return True
 
     def _press_next(self, screen):
         """Press the Next button to skip to next base."""
@@ -92,11 +96,20 @@ class Attacker:
         self.navigator.go_home()
 
     def _deploy_troops(self, screen):
-        """Deploy troops according to configured strategy."""
+        """Deploy troops according to configured or recorded strategy."""
         if self.config.safety.dry_run:
             logger.info("[DRY RUN] Would deploy troops here")
             self.attack_count += 1
             return
+
+        # Use recorded strategy if set
+        if self.strategy_name:
+            logger.info("Using recorded strategy: %s", self.strategy_name)
+            recorder = StrategyRecorder(self.adb)
+            if recorder.replay(self.strategy_name):
+                self.attack_count += 1
+                return
+            logger.warning("Recorded strategy failed, falling back to default")
 
         strategy = self.config.attack.deploy_strategy
         side = self.config.attack.deploy_side
@@ -119,23 +132,22 @@ class Attacker:
     def _get_deploy_points(self, w, h, side):
         """Get a list of deployment coordinates along the specified edge."""
         num_points = 10
-        margin = 0.05
+        margin = 0.15
 
         if side == "bottom":
-            y = int(h * 0.85)
+            y = int(h * 0.70)  # above troop bar
             return [(int(w * (margin + i * (1 - 2 * margin) / (num_points - 1))), y) for i in range(num_points)]
         elif side == "top":
-            y = int(h * 0.15)
+            y = int(h * 0.20)
             return [(int(w * (margin + i * (1 - 2 * margin) / (num_points - 1))), y) for i in range(num_points)]
         elif side == "left":
-            x = int(w * 0.15)
+            x = int(w * 0.20)
             return [(x, int(h * (margin + i * (1 - 2 * margin) / (num_points - 1)))) for i in range(num_points)]
         elif side == "right":
-            x = int(w * 0.85)
+            x = int(w * 0.80)
             return [(x, int(h * (margin + i * (1 - 2 * margin) / (num_points - 1)))) for i in range(num_points)]
         else:
-            # Default to bottom
-            y = int(h * 0.85)
+            y = int(h * 0.70)
             return [(int(w * (margin + i * (1 - 2 * margin) / (num_points - 1))), y) for i in range(num_points)]
 
     def _deploy_all_troops(self, screen, deploy_points, strategy):
@@ -145,42 +157,55 @@ class Attacker:
         troop_bar_region_h = int(screen.shape[0] * 0.12)
 
         # Try to find known troop icons in the troop bar
-        army_config = self.config.training.army
-        if not isinstance(army_config, dict):
+        army_config = vars(self.config.training.army)
+        if not army_config:
+            logger.warning("No army configured in config.training.army")
             return
 
         for troop_name in army_config:
             template_path = f"troops/{troop_name}.png"
             match = self.vision.find_template(screen, template_path)
             if match is None:
+                logger.warning("Troop '%s' not found in troop bar", troop_name)
                 continue
 
             # Tap the troop icon to select it
+            logger.info("Selecting troop: %s at (%d, %d)", troop_name, match[0], match[1])
             self.adb.tap(match[0], match[1], scale=False)
             self.adb.random_delay(0.1, 0.3)
 
-            # Deploy along the edge
+            # Deploy fixed 40 of each troop
+            count = 40
+            deployed = 0
+
             if strategy == "spam_one_side":
-                # All troops at one point
                 mid = deploy_points[len(deploy_points) // 2]
-                for _ in range(20):
+                for _ in range(count):
                     self.adb.tap(mid[0], mid[1], scale=False)
                     self.adb.random_delay(0.02, 0.05)
+                    deployed += 1
             elif strategy == "spread":
-                # Spread across all points
+                per_point = max(1, count // len(deploy_points))
                 for point in deploy_points:
-                    for _ in range(3):
+                    for _ in range(per_point):
+                        if deployed >= count:
+                            break
                         self.adb.tap(point[0], point[1], scale=False)
                         self.adb.random_delay(0.02, 0.05)
+                        deployed += 1
             elif strategy == "surgical":
-                # Deploy at fewer, specific points
                 key_points = [deploy_points[0], deploy_points[len(deploy_points) // 2], deploy_points[-1]]
+                per_point = max(1, count // len(key_points))
                 for point in key_points:
-                    for _ in range(8):
+                    for _ in range(per_point):
+                        if deployed >= count:
+                            break
                         self.adb.tap(point[0], point[1], scale=False)
                         self.adb.random_delay(0.02, 0.05)
+                    deployed += 1
                     self.adb.random_delay(0.3, 0.6)
 
+            logger.info("Deployed %d/%d %s", deployed, count, troop_name)
             self.adb.random_delay(0.3, 0.5)
 
     def _deploy_heroes(self, deploy_points):
