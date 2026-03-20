@@ -1,5 +1,6 @@
 import base64
 import logging
+import random
 import signal
 import threading
 import time
@@ -35,6 +36,9 @@ class Bot:
         self._thread = None
         self._last_screen = None
         self._lock = threading.Lock()
+        self._last_relog_time = None
+        self._relog_interval = None  # set randomly each cycle
+        self._coc_package = "com.supercell.clashofclans"
 
     def start(self):
         """Start the bot in a background thread."""
@@ -70,9 +74,11 @@ class Bot:
         self.running = True
         self.status = "running"
         self._start_time = time.time()
+        self._last_relog_time = time.time()
+        self._relog_interval = random.randint(180, 240)  # 3-4 minutes
         donate_interval = self.config.timing.action_cooldown.donate if hasattr(self.config.timing.action_cooldown, "donate") else 30
 
-        logger.info("Donation bot started. Checking every %ds. Press Ctrl+C to stop.", donate_interval)
+        logger.info("Donation bot started. Checking every %ds. Relog every %ds. Press Ctrl+C to stop.", donate_interval, self._relog_interval)
 
         try:
             while self.running:
@@ -80,6 +86,11 @@ class Bot:
                     if self._exceeded_runtime():
                         logger.info("Max runtime reached, stopping.")
                         break
+
+                    # Check if it's time to relog
+                    if time.time() - self._last_relog_time >= self._relog_interval:
+                        self._relog()
+                        continue
 
                     screen = self.adb.screenshot()
                     if screen is None:
@@ -164,6 +175,35 @@ class Bot:
 
         _, buf = cv2.imencode(".jpg", screen, [cv2.IMWRITE_JPEG_QUALITY, 60])
         return base64.b64encode(buf).decode("utf-8")
+
+    def _relog(self):
+        """Close and reopen CoC to avoid detection."""
+        logger.info("Relogging to avoid ban detection...")
+
+        # Force stop CoC
+        self.adb._run("shell", "am", "force-stop", self._coc_package)
+        logger.info("CoC closed. Waiting before reopening...")
+
+        # Wait a random amount (15-30s) to look human
+        wait_time = random.randint(15, 30)
+        self._sleep_interruptible(wait_time)
+
+        if not self.running:
+            return
+
+        # Reopen CoC
+        self.adb._run("shell", "monkey", "-p", self._coc_package, "-c",
+                       "android.intent.category.LAUNCHER", "1")
+        logger.info("CoC reopening. Waiting for game to load...")
+
+        # Wait for game to fully load (30-45s)
+        load_time = random.randint(30, 45)
+        self._sleep_interruptible(load_time)
+
+        # Set next relog interval (3-4 minutes)
+        self._last_relog_time = time.time()
+        self._relog_interval = random.randint(180, 240)
+        logger.info("Relog complete. Next relog in %ds.", self._relog_interval)
 
     def _sleep_interruptible(self, seconds):
         """Sleep that can be interrupted by Ctrl+C."""
