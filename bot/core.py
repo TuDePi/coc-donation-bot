@@ -51,8 +51,10 @@ class Bot:
 
     def run(self):
         """Main bot loop."""
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        # Only set signal handlers if running in the main thread
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
 
         if not self.adb.is_connected():
             logger.error("No device connected! Connect your phone via USB and enable USB debugging.")
