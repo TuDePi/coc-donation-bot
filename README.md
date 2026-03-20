@@ -11,6 +11,7 @@ The bot connects to an Android device via ADB, takes screenshots, and uses OpenC
 **Core technologies:**
 - **ADB (Android Debug Bridge)** — controls the Android device over USB
 - **OpenCV** — image processing and template matching
+- **Flask** — web dashboard for remote control
 - **Python** — glue logic and automation loop
 
 ## Features
@@ -18,6 +19,10 @@ The bot connects to an Android device via ADB, takes screenshots, and uses OpenC
 - Automatically opens clan chat
 - Detects donation requests
 - Donates configured troops
+- Web dashboard with live stats and screenshots
+- Start/stop bot remotely from any browser
+- Donation history and per-hour stats
+- Runs headless on a Raspberry Pi
 - Graceful shutdown with Ctrl+C
 
 ## Requirements
@@ -66,25 +71,57 @@ python3 tools/test_match.py templates/ui/chat_button.png 0.6
 
 ### 5. Run the bot
 
+**Without web dashboard:**
 ```bash
 python3 main.py
 ```
 
-Options:
+**With web dashboard:**
+```bash
+python3 main.py --web --port 8080
+```
+
+Then open `http://localhost:8080` in your browser.
+
+**Options:**
+- `--web` — start with web dashboard
+- `--port PORT` — web dashboard port (default: 5000)
+- `--host HOST` — web dashboard host (default: 0.0.0.0)
 - `--dry-run` — takes screenshots and detects elements without tapping
 - `--debug` — enables verbose logging
 
+## Web Dashboard
+
+The web dashboard lets you control and monitor the bot from any browser on your network.
+
+- **Live screenshot** of the game
+- **Start/Stop** the bot remotely
+- **Donation stats** — total donations, donations per hour
+- **Donation history** — last 50 donations with timestamps
+- **Device info** — connection status and resolution
+
+Access it at `http://<device-ip>:8080` from any device on the same network.
+
 ## Running on Raspberry Pi
 
-This bot runs on a Raspberry Pi (Pi 4 recommended):
+This bot runs headless on a Raspberry Pi (Pi 4 recommended):
 
 ```bash
 sudo apt install adb python3-pip
-pip install opencv-python-headless numpy pyyaml
-python3 main.py
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Capture templates on your main machine first, then copy the project to the Pi.
+> **Tip:** If OpenCV fails to build on ARM, use `opencv-python-headless` instead.
+
+Capture templates on your main machine first, then copy or `git clone` the project to the Pi.
+
+```bash
+python3 main.py --web --port 8080
+```
+
+Then control the bot from any browser at `http://<pi-ip>:8080`.
 
 ## Project Structure
 
@@ -98,6 +135,10 @@ Capture templates on your main machine first, then copy the project to the Pi.
 │   ├── state_machine.py     # Game state detection
 │   └── actions/
 │       └── donator.py       # Donation logic
+├── web/
+│   ├── app.py               # Flask web dashboard
+│   ├── static/              # CSS
+│   └── templates/           # HTML templates
 ├── templates/               # Template images (device-specific)
 │   ├── ui/
 │   ├── donations/
@@ -114,6 +155,8 @@ Capture templates on your main machine first, then copy the project to the Pi.
 - **Android Automation** — controlling devices with ADB
 - **State Machines** — detecting and managing game states
 - **Image Processing** — screenshot capture, scaling, and comparison
+- **Web Development** — Flask dashboard with live updates
+- **Networking** — remote device control over LAN
 
 ## License
 
