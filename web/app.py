@@ -79,8 +79,9 @@ def api_start():
         return jsonify({"error": "Bot not initialized"}), 500
     if bot.running:
         return jsonify({"status": "already_running"})
-    bot.start()
-    return jsonify({"status": "started"})
+    mode = request.json.get("mode", "donate") if request.is_json else "donate"
+    bot.start(mode=mode)
+    return jsonify({"status": "started", "mode": mode})
 
 
 @app.route("/api/stop", methods=["POST"])

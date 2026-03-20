@@ -143,28 +143,27 @@ header h1 {
     background: #2a4a6a;
 }
 
-.btn-toggle {
-    padding: 10px 24px;
-    font-size: 13px;
+.btn-collect {
+    background: #1a3a5a;
+    color: #44aaff;
     flex: 1;
 }
 
-.btn-toggle.on {
-    background: #1a4a1a;
-    color: #44ff44;
+.btn-collect:hover:not(:disabled) {
+    background: #2a4a6a;
 }
 
-.btn-toggle.on:hover {
-    background: #2a5a2a;
+.mode-indicator {
+    margin-top: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-align: center;
+    min-height: 18px;
 }
 
-.btn-toggle.off {
-    background: #3a2a1a;
-    color: #ffaa44;
-}
-
-.btn-toggle.off:hover {
-    background: #4a3a2a;
+.mode-indicator.active {
+    color: #f0a030;
 }
 
 /* Stats */
