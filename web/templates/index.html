@@ -22,13 +22,11 @@
             <div class="card">
                 <h2>Control</h2>
                 <div class="control-buttons">
-                    <button id="btn-start" class="btn btn-start" onclick="startBot()">START</button>
+                    <button id="btn-donate" class="btn btn-start" onclick="startBot('donate')">DONATE</button>
+                    <button id="btn-collect" class="btn btn-collect" onclick="startBot('collect')">COLLECT</button>
                     <button id="btn-stop" class="btn btn-stop" onclick="stopBot()" disabled>STOP</button>
                 </div>
-                <hr style="margin: 12px 0; border-color: #333;">
-                <div class="control-buttons">
-                    <button id="btn-collecting" class="btn btn-toggle on" onclick="toggleCollecting()">COLLECTING: ON</button>
-                </div>
+                <div id="mode-indicator" class="mode-indicator"></div>
             </div>
 
             <!-- Stats -->
@@ -122,11 +120,15 @@
         });
 
         // API calls
-        async function startBot() {
-            const res = await fetch('/api/start', { method: 'POST' });
+        async function startBot(mode) {
+            const res = await fetch('/api/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode }),
+            });
             const data = await res.json();
             if (data.status === 'started') {
-                appendLog('[WEB] Bot started');
+                appendLog('[WEB] Bot started in ' + mode + ' mode');
             }
         }
 
@@ -136,12 +138,6 @@
             if (data.status === 'stopped') {
                 appendLog('[WEB] Bot stop requested');
             }
-        }
-
-        async function toggleCollecting() {
-            const res = await fetch('/api/collecting/toggle', { method: 'POST' });
-            const data = await res.json();
-            updateCollectingButton(data.collecting_enabled);
         }
 
         async function refreshScreenshot() {
@@ -212,15 +208,25 @@
             deviceEl.className = 'badge ' + (data.device_connected ? 'connected' : 'disconnected');
 
             // Buttons
-            document.getElementById('btn-start').disabled = data.running;
+            document.getElementById('btn-donate').disabled = data.running;
+            document.getElementById('btn-collect').disabled = data.running;
             document.getElementById('btn-stop').disabled = !data.running;
+
+            // Mode indicator
+            const modeEl = document.getElementById('mode-indicator');
+            if (data.running) {
+                modeEl.textContent = 'Mode: ' + (data.mode === 'collect' ? 'COLLECTING' : 'DONATING');
+                modeEl.className = 'mode-indicator active';
+            } else {
+                modeEl.textContent = '';
+                modeEl.className = 'mode-indicator';
+            }
 
             // Stats
             document.getElementById('stat-donated').textContent = data.total_donated;
             document.getElementById('stat-uptime').textContent = formatUptime(data.uptime_seconds);
             document.getElementById('stat-dph').textContent = data.donations_per_hour;
             document.getElementById('stat-collected').textContent = data.total_collected || 0;
-            updateCollectingButton(data.collecting_enabled);
             document.getElementById('stat-resolution').textContent = data.device_resolution
                 ? data.device_resolution[0] + 'x' + data.device_resolution[1] : '--';
 
@@ -259,14 +265,6 @@
                 const timeStr = t.toLocaleTimeString();
                 return `<tr><td>${timeStr}</td><td>${h.troop}</td></tr>`;
             }).join('');
-        }
-
-        function updateCollectingButton(enabled) {
-            const btn = document.getElementById('btn-collecting');
-            if (btn) {
-                btn.textContent = 'COLLECTING: ' + (enabled ? 'ON' : 'OFF');
-                btn.className = 'btn btn-toggle ' + (enabled ? 'on' : 'off');
-            }
         }
 
         function formatUptime(seconds) {

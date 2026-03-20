@@ -42,14 +42,16 @@ class Bot:
         self._last_collect_time = 0
         self._collect_interval = 120  # collect every 2 minutes
         self.collecting_enabled = True  # can be toggled from web UI
+        self._mode = "donate"  # "donate" or "collect"
         self._relog_interval = None  # set randomly each cycle
         self._coc_package = "com.supercell.clashofclans"
 
-    def start(self):
-        """Start the bot in a background thread."""
+    def start(self, mode="donate"):
+        """Start the bot in a background thread. mode: 'donate' or 'collect'"""
         if self._thread and self._thread.is_alive():
             logger.warning("Bot is already running")
             return
+        self._mode = mode
         self._thread = threading.Thread(target=self.run, daemon=True)
         self._thread.start()
 
@@ -83,7 +85,7 @@ class Bot:
         self._relog_interval = random.randint(180, 240)  # 3-4 minutes
         donate_interval = self.config.timing.action_cooldown.donate if hasattr(self.config.timing.action_cooldown, "donate") else 30
 
-        logger.info("Donation bot started. Checking every %ds. Relog every %ds. Press Ctrl+C to stop.", donate_interval, self._relog_interval)
+        logger.info("Bot started in %s mode. Checking every %ds. Relog every %ds.", self._mode, donate_interval, self._relog_interval)
 
         try:
             while self.running:
@@ -112,21 +114,25 @@ class Bot:
                     with self._lock:
                         self._last_screen = screen
 
-                    # Collect resources every 2 minutes (if enabled)
-                    if self.collecting_enabled and time.time() - self._last_collect_time >= self._collect_interval:
+                    if self._mode == "collect":
+                        # Collect-only mode
                         logger.info("Checking for ready collectors...")
-                        collected = self.collector.collect(screen)
-                        self._last_collect_time = time.time()
-                        if collected > 0:
-                            # Wait a bit after collecting before donating
-                            self._sleep_interruptible(3)
-                            continue
-
-                    donated = self.donator.donate(screen)
-                    if donated > 0:
-                        logger.info("Waiting %ds before next donation check", donate_interval)
+                        self.collector.collect(screen)
                     else:
-                        logger.debug("No donations made, checking again in %ds", donate_interval)
+                        # Donate mode (with optional collecting)
+                        if self.collecting_enabled and time.time() - self._last_collect_time >= self._collect_interval:
+                            logger.info("Checking for ready collectors...")
+                            collected = self.collector.collect(screen)
+                            self._last_collect_time = time.time()
+                            if collected > 0:
+                                self._sleep_interruptible(3)
+                                continue
+
+                        donated = self.donator.donate(screen)
+                        if donated > 0:
+                            logger.info("Waiting %ds before next donation check", donate_interval)
+                        else:
+                            logger.debug("No donations made, checking again in %ds", donate_interval)
 
                     # Wait before next cycle
                     self._sleep_interruptible(donate_interval)
@@ -164,6 +170,7 @@ class Bot:
 
         return {
             "status": self.status,
+            "mode": self._mode,
             "running": self.running,
             "uptime_seconds": int(elapsed),
             "total_donated": self.donator.total_donated,
