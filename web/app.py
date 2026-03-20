@@ -44,6 +44,10 @@ def init_app(cfg_path="config.yaml"):
     config = load_config(config_path)
     bot = Bot(config)
 
+    # Suppress noisy werkzeug/socketio polling logs
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    logging.getLogger("engineio.server").setLevel(logging.WARNING)
+
     # Add web log handler
     handler = WebLogHandler()
     handler.setFormatter(logging.Formatter(
