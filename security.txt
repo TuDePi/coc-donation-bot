@@ -1,6 +1,6 @@
 ================================================================================
 SECURITY AUDIT REPORT
-Project: Clash of Clans Bot
+Project: Tudebot Clash-of-Clans Bot
 Audit Date: 2026-03-22
 Auditor: Security Penetration Tester Agent (claude-sonnet-4-6)
 ================================================================================

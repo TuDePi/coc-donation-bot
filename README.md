@@ -1,4 +1,4 @@
-# CoC Bot
+# Tudebot Clash-of-Clans Bot
 
 An automated Clash of Clans bot built with Python, ADB, and OpenCV for **educational purposes only**.
 

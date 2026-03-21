@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clash of Clans Donation Bot"""
+"""Tudebot Clash-of-Clans Bot"""
 
 import argparse
 
@@ -9,7 +9,7 @@ from bot.core import Bot
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CoC Donation Bot")
+    parser = argparse.ArgumentParser(description="Tudebot Clash-of-Clans Bot")
     parser.add_argument("-c", "--config", default="config.yaml", help="Config file path")
     parser.add_argument("--dry-run", action="store_true", help="Log actions without tapping")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
