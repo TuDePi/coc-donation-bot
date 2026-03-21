@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Security Fixes
+- **CRIT-001 fixed**: Strategy file names now sanitized with strict `[a-zA-Z0-9_\-]` regex and resolved-path validation in both save and replay
+- **HIGH-001 fixed**: Config save endpoint validates YAML schema before writing; `logging.file` restricted to `logs/` directory
+- **HIGH-002 fixed**: WebSocket logs now emit to per-session rooms only; DEBUG messages filtered out
+- **HIGH-003 fixed**: Sessions expire after 8 hours via `PERMANENT_SESSION_LIFETIME`; session cleared on login to prevent fixation
+- **HIGH-004 fixed**: `adb shell monkey` replaced with `adb shell am start` to eliminate injection risk
+
+### Branding
+- Renamed project to **Tudebot Clash-of-Clans Bot** across all files
+
 ### Smarter Attack Deployment
 - **Loot evaluation**: OCR reads gold/elixir/dark elixir values from the search screen and skips bases below `config.attack.min_loot` thresholds
 - **Color-based building detection**: Finds gold mines (yellow) and elixir collectors (purple) using HSV color detection instead of template matching
