@@ -1,3 +1,4 @@
+import re
 import subprocess
 import time
 import logging
@@ -9,6 +10,9 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# CRIT-002 fix: strict regex for valid ADB device serial strings
+_SERIAL_PATTERN = re.compile(r'^[a-zA-Z0-9:._\-]{1,64}$')
+
 
 class ADBController:
     """Wrapper around ADB for device communication: screenshots, taps, swipes."""
@@ -17,6 +21,9 @@ class ADBController:
     REFERENCE_HEIGHT = 1080
 
     def __init__(self, serial=None):
+        # CRIT-002 fix: validate device serial against strict pattern
+        if serial and not _SERIAL_PATTERN.match(serial):
+            raise ValueError(f"Invalid device serial: {serial!r}")
         self.serial = serial
         self._resolution = None
 

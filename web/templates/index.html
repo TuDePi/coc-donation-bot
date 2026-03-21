@@ -8,6 +8,19 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
 </head>
 <body>
+
+    <!-- Top navbar -->
+    <nav class="navbar">
+        <span class="navbar-brand">⚔ COC Bot</span>
+        <button class="nav-link active" onclick="showPage('dashboard', this)">Dashboard</button>
+        <button class="nav-link" onclick="showPage('api', this)">CoC API</button>
+        <form action="/logout" method="POST" style="margin:0">
+            <button type="submit" class="nav-logout">Logout</button>
+        </form>
+    </nav>
+
+    <!-- ── Dashboard Page ── -->
+    <div id="page-dashboard" class="page active">
     <div class="container">
         <header>
             <h1>CoC Donation Bot</h1>
@@ -119,6 +132,66 @@
             </div>
         </div>
     </div>
+    </div><!-- /page-dashboard -->
+
+    <!-- ── CoC API Page ── -->
+    <div id="page-api" class="page">
+    <div class="api-explorer">
+
+        <!-- API Key bar -->
+        <div class="api-key-bar">
+            <label>API KEY</label>
+            <input type="password" id="api-key-input" class="api-key-input" placeholder="Paste your key from developer.clashofclans.com" />
+            <button class="api-key-save" onclick="saveApiKey()">Save</button>
+            <span id="api-key-status" class="api-key-status"></span>
+        </div>
+
+        <!-- Body -->
+        <div class="api-body">
+
+            <!-- Sidebar -->
+            <div class="api-sidebar" id="api-sidebar"></div>
+
+            <!-- Main panel -->
+            <div class="api-main">
+                <div class="api-endpoint-header" id="ep-header">
+                    <div class="api-endpoint-header-top">
+                        <span id="ep-method" class="api-method-badge GET">GET</span>
+                        <span id="ep-path" class="api-endpoint-path">Select an endpoint</span>
+                    </div>
+                    <div id="ep-desc" class="api-endpoint-desc">Choose an endpoint from the sidebar to get started</div>
+                </div>
+
+                <div class="api-form-area">
+                    <div class="api-params" id="api-params-panel">
+                        <div class="api-placeholder-main">← Pick an endpoint from the sidebar</div>
+                    </div>
+
+                    <!-- Response panel -->
+                    <div class="api-response-panel">
+                        <div class="api-response-header">
+                            <span class="api-response-title">Response</span>
+                            <span id="api-resp-status" class="api-status-badge" style="display:none"></span>
+                            <span id="api-resp-time" class="api-response-time"></span>
+                        </div>
+                        <div class="api-response-body" id="api-resp-body">
+                            <div class="api-placeholder">
+                                <span style="font-size:28px">⚡</span>
+                                <span>Send a request to see the response</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="api-send-bar">
+                    <button class="api-send-btn" id="api-send-btn" onclick="sendApiRequest()">▶ SEND</button>
+                    <span id="api-send-status" class="api-send-status"></span>
+                </div>
+            </div>
+
+        </div>
+    </div>
+    </div><!-- /page-api -->
 
     <script>
         const socket = io();
@@ -409,6 +482,265 @@
             if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
             return `${m}:${String(s).padStart(2,'0')}`;
         }
+
+        // ── Page navigation ──
+        function showPage(name, btn) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.nav-link').forEach(b => b.classList.remove('active'));
+            document.getElementById('page-' + name).classList.add('active');
+            btn.classList.add('active');
+        }
+
+        // ── CoC API Explorer ──
+        const COC_API = {
+            Clans: [
+                { id:'search-clans', name:'Search Clans', method:'GET', path:'/clans', desc:'Search all clans by name and/or filtering criteria',
+                  path_params:[], query_params:[
+                    {n:'name',        hint:'Clan name (min 3 chars)', req:false},
+                    {n:'warFrequency',hint:'always / oncePerWeek / never…', req:false, sel:['','always','moreThanOncePerWeek','oncePerWeek','lessThanOncePerWeek','never','unknown']},
+                    {n:'locationId',  hint:'Location ID', req:false, num:true},
+                    {n:'minMembers',  hint:'1–50', req:false, num:true},
+                    {n:'maxMembers',  hint:'1–50', req:false, num:true},
+                    {n:'minClanPoints',hint:'', req:false, num:true},
+                    {n:'minClanLevel', hint:'', req:false, num:true},
+                    {n:'limit',       hint:'Results per page', req:false, num:true},
+                    {n:'after',       hint:'Pagination cursor', req:false},
+                    {n:'before',      hint:'Pagination cursor', req:false},
+                ]},
+                { id:'get-clan', name:'Get Clan', method:'GET', path:'/clans/{clanTag}', desc:'Get information about a single clan',
+                  path_params:[{n:'clanTag',hint:'e.g. #ABC123',req:true}], query_params:[]},
+                { id:'clan-members', name:'Clan Members', method:'GET', path:'/clans/{clanTag}/members', desc:'List all members of a clan',
+                  path_params:[{n:'clanTag',hint:'e.g. #ABC123',req:true}], query_params:[{n:'limit',hint:'',req:false,num:true},{n:'after',hint:'',req:false},{n:'before',hint:'',req:false}]},
+                { id:'war-log', name:'War Log', method:'GET', path:'/clans/{clanTag}/warlog', desc:'Clan war log (public war log required)',
+                  path_params:[{n:'clanTag',hint:'e.g. #ABC123',req:true}], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+                { id:'current-war', name:'Current War', method:'GET', path:'/clans/{clanTag}/currentwar', desc:'Current clan war info',
+                  path_params:[{n:'clanTag',hint:'e.g. #ABC123',req:true}], query_params:[]},
+                { id:'cwl-group', name:'CWL Group', method:'GET', path:'/clans/{clanTag}/currentwar/leaguegroup', desc:'Current Clan War League group',
+                  path_params:[{n:'clanTag',hint:'e.g. #ABC123',req:true}], query_params:[]},
+                { id:'cwl-war', name:'CWL War Round', method:'GET', path:'/clanwarleagues/wars/{warTag}', desc:'Individual CWL war round',
+                  path_params:[{n:'warTag',hint:'War tag',req:true}], query_params:[]},
+                { id:'capital-raids', name:'Capital Raids', method:'GET', path:'/clans/{clanTag}/capitalraidseasons', desc:'Clan capital raid seasons',
+                  path_params:[{n:'clanTag',hint:'e.g. #ABC123',req:true}], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+            ],
+            Players: [
+                { id:'get-player', name:'Get Player', method:'GET', path:'/players/{playerTag}', desc:'Get information about a single player',
+                  path_params:[{n:'playerTag',hint:'e.g. #ABC123',req:true}], query_params:[]},
+                { id:'verify-token', name:'Verify Token', method:'POST', path:'/players/{playerTag}/verifytoken', desc:'Verify player API token from game settings',
+                  path_params:[{n:'playerTag',hint:'e.g. #ABC123',req:true}], query_params:[], body_params:[{n:'token',hint:'In-game API token',req:true}]},
+            ],
+            Leagues: [
+                { id:'list-leagues', name:'List Leagues', method:'GET', path:'/leagues', desc:'List all available leagues',
+                  path_params:[], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+                { id:'get-league', name:'Get League', method:'GET', path:'/leagues/{leagueId}', desc:'Get league information',
+                  path_params:[{n:'leagueId',hint:'e.g. 29000022',req:true}], query_params:[]},
+                { id:'league-seasons', name:'League Seasons', method:'GET', path:'/leagues/{leagueId}/seasons', desc:'League seasons (Legend League only)',
+                  path_params:[{n:'leagueId',hint:'29000022 for Legend',req:true}], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+                { id:'season-rankings', name:'Season Rankings', method:'GET', path:'/leagues/{leagueId}/seasons/{seasonId}', desc:'Season player rankings',
+                  path_params:[{n:'leagueId',hint:'29000022',req:true},{n:'seasonId',hint:'e.g. 2024-04',req:true}], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+                { id:'builder-leagues', name:'Builder Base Leagues', method:'GET', path:'/builderbaseleagues', desc:'List all Builder Base leagues',
+                  path_params:[], query_params:[{n:'limit',req:false,num:true}]},
+                { id:'war-leagues', name:'War Leagues', method:'GET', path:'/warleagues', desc:'List all Clan War Leagues',
+                  path_params:[], query_params:[{n:'limit',req:false,num:true}]},
+            ],
+            Locations: [
+                { id:'list-locations', name:'List Locations', method:'GET', path:'/locations', desc:'List all available locations',
+                  path_params:[], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+                { id:'get-location', name:'Get Location', method:'GET', path:'/locations/{locationId}', desc:'Get a specific location',
+                  path_params:[{n:'locationId',hint:'',req:true}], query_params:[]},
+                { id:'rank-clans', name:'Clan Rankings', method:'GET', path:'/locations/{locationId}/rankings/clans', desc:'Clan rankings by location',
+                  path_params:[{n:'locationId',hint:'"global" or ID',req:true}], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+                { id:'rank-players', name:'Player Rankings', method:'GET', path:'/locations/{locationId}/rankings/players', desc:'Player rankings by location',
+                  path_params:[{n:'locationId',hint:'"global" or ID',req:true}], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+                { id:'rank-capitals', name:'Capital Rankings', method:'GET', path:'/locations/{locationId}/rankings/capitals', desc:'Clan capital rankings by location',
+                  path_params:[{n:'locationId',hint:'"global" or ID',req:true}], query_params:[{n:'limit',req:false,num:true},{n:'after',req:false},{n:'before',req:false}]},
+            ],
+            Labels: [
+                { id:'clan-labels', name:'Clan Labels', method:'GET', path:'/labels/clans', desc:'List all clan labels',
+                  path_params:[], query_params:[{n:'limit',req:false,num:true}]},
+                { id:'player-labels', name:'Player Labels', method:'GET', path:'/labels/players', desc:'List all player labels',
+                  path_params:[], query_params:[{n:'limit',req:false,num:true}]},
+            ],
+            'Gold Pass': [
+                { id:'gold-pass', name:'Current Season', method:'GET', path:'/goldpass/seasons/current', desc:'Current Gold Pass season info',
+                  path_params:[], query_params:[]},
+            ],
+        };
+
+        let currentEp = null;
+
+        function buildSidebar() {
+            const sidebar = document.getElementById('api-sidebar');
+            sidebar.innerHTML = '';
+            for (const [cat, eps] of Object.entries(COC_API)) {
+                const lbl = document.createElement('div');
+                lbl.className = 'api-cat-label';
+                lbl.textContent = cat;
+                sidebar.appendChild(lbl);
+                eps.forEach(ep => {
+                    const item = document.createElement('div');
+                    item.className = 'api-ep-item';
+                    item.innerHTML = `<span class="api-ep-method ${ep.method}">${ep.method}</span>${ep.name}`;
+                    item.onclick = () => selectEp(ep, item);
+                    sidebar.appendChild(item);
+                });
+            }
+        }
+
+        function selectEp(ep, itemEl) {
+            document.querySelectorAll('.api-ep-item').forEach(i => i.classList.remove('active'));
+            itemEl.classList.add('active');
+            currentEp = ep;
+
+            const mEl = document.getElementById('ep-method');
+            mEl.textContent = ep.method;
+            mEl.className = 'api-method-badge ' + ep.method;
+            document.getElementById('ep-path').textContent = ep.path;
+            document.getElementById('ep-desc').textContent = ep.desc;
+
+            buildParamsForm(ep);
+            clearResponse();
+        }
+
+        function buildParamsForm(ep) {
+            const panel = document.getElementById('api-params-panel');
+            panel.innerHTML = '';
+
+            if ((ep.path_params || []).length) {
+                const grp = document.createElement('div');
+                grp.className = 'api-param-group';
+                grp.innerHTML = '<div class="api-param-group-title">Path Parameters</div>';
+                ep.path_params.forEach(p => grp.appendChild(makeParamRow(p, 'path')));
+                panel.appendChild(grp);
+            }
+            if ((ep.query_params || []).length) {
+                const grp = document.createElement('div');
+                grp.className = 'api-param-group';
+                grp.innerHTML = '<div class="api-param-group-title">Query Parameters</div>';
+                ep.query_params.forEach(p => grp.appendChild(makeParamRow(p, 'query')));
+                panel.appendChild(grp);
+            }
+            if ((ep.body_params || []).length) {
+                const grp = document.createElement('div');
+                grp.className = 'api-param-group';
+                grp.innerHTML = '<div class="api-param-group-title">Request Body</div>';
+                ep.body_params.forEach(p => grp.appendChild(makeParamRow(p, 'body')));
+                panel.appendChild(grp);
+            }
+            if (!panel.children.length) {
+                panel.innerHTML = '<p style="color:#444;font-size:13px;padding:8px 0">No parameters required.</p>';
+            }
+        }
+
+        function makeParamRow(p, group) {
+            const row = document.createElement('div');
+            row.className = 'api-param-row';
+            let input;
+            if (p.sel) {
+                input = `<select id="p-${group}-${p.n}" class="api-param-select">${p.sel.map(o=>`<option>${o}</option>`).join('')}</select>`;
+            } else {
+                input = `<input type="${p.num ? 'number' : 'text'}" id="p-${group}-${p.n}" class="api-param-input" placeholder="${p.hint || ''}"${p.req ? ' required' : ''}>`;
+            }
+            row.innerHTML = `
+                <div class="api-param-label">
+                    <div class="api-param-name${p.req ? ' required' : ''}">${p.n}${p.req ? ' *' : ''}</div>
+                    ${p.hint ? `<div class="api-param-hint">${p.hint}</div>` : ''}
+                </div>
+                ${input}`;
+            return row;
+        }
+
+        async function sendApiRequest() {
+            if (!currentEp) return;
+            const token = document.getElementById('api-key-input').value.trim();
+            if (!token) { document.getElementById('api-send-status').textContent = 'Enter your API key first.'; return; }
+
+            let path = currentEp.path;
+            const qParams = {}, bodyParams = {};
+
+            (currentEp.path_params || []).forEach(p => {
+                const v = document.getElementById(`p-path-${p.n}`)?.value?.trim();
+                if (v) path = path.replace(`{${p.n}}`, encodeURIComponent(v.replace('#', '%23')));
+            });
+            (currentEp.query_params || []).forEach(p => {
+                const v = document.getElementById(`p-query-${p.n}`)?.value?.trim();
+                if (v) qParams[p.n] = v;
+            });
+            (currentEp.body_params || []).forEach(p => {
+                const v = document.getElementById(`p-body-${p.n}`)?.value?.trim();
+                if (v) bodyParams[p.n] = v;
+            });
+
+            const btn = document.getElementById('api-send-btn');
+            const statusEl = document.getElementById('api-send-status');
+            btn.disabled = true;
+            statusEl.textContent = 'Sending…';
+
+            try {
+                const res = await fetch('/api/coc/proxy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, method: currentEp.method, path, params: qParams, body: bodyParams }),
+                });
+                const data = await res.json();
+                showResponse(data);
+                statusEl.textContent = '';
+            } catch(e) {
+                statusEl.textContent = 'Error: ' + e.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function showResponse(data) {
+            const sEl = document.getElementById('api-resp-status');
+            const tEl = document.getElementById('api-resp-time');
+            const bEl = document.getElementById('api-resp-body');
+            sEl.style.display = 'inline-block';
+            sEl.textContent = data.status || 'ERR';
+            const sc = parseInt(data.status);
+            sEl.className = 'api-status-badge ' + (sc >= 200 && sc < 300 ? 'api-status-ok' : sc >= 400 && sc < 500 ? 'api-status-warn' : 'api-status-err');
+            tEl.textContent = data.ms ? data.ms + 'ms' : '';
+            bEl.innerHTML = data.error
+                ? `<span style="color:#ff5555">${escH(data.error)}</span>`
+                : syntaxHL(data.data);
+        }
+
+        function clearResponse() {
+            document.getElementById('api-resp-status').style.display = 'none';
+            document.getElementById('api-resp-time').textContent = '';
+            document.getElementById('api-resp-body').innerHTML = '<div class="api-placeholder"><span style="font-size:28px">⚡</span><span>Send a request to see the response</span></div>';
+        }
+
+        function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+        function syntaxHL(json) {
+            return escH(JSON.stringify(json, null, 2)).replace(
+                /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+                m => {
+                    let c = 'json-num';
+                    if (/^"/.test(m)) c = /:$/.test(m) ? 'json-key' : 'json-str';
+                    else if (/true|false/.test(m)) c = 'json-bool';
+                    else if (/null/.test(m)) c = 'json-null';
+                    return `<span class="${c}">${m}</span>`;
+                }
+            );
+        }
+
+        function saveApiKey() {
+            const k = document.getElementById('api-key-input').value.trim();
+            if (k) {
+                localStorage.setItem('coc_api_key', k);
+                const s = document.getElementById('api-key-status');
+                s.style.color = '#44cc88';
+                s.textContent = '✓ Saved';
+                setTimeout(() => { s.textContent = ''; }, 2000);
+            }
+        }
+
+        // Init API explorer
+        const savedKey = localStorage.getItem('coc_api_key');
+        if (savedKey) document.getElementById('api-key-input').value = savedKey;
+        buildSidebar();
     </script>
 </body>
 </html>

@@ -4,6 +4,16 @@ An automated Clash of Clans bot built with Python, ADB, and OpenCV for **educati
 
 > ⚠️ **Disclaimer**: This project is made strictly for educational purposes to learn about computer vision, template matching, and Android automation. Using bots in Clash of Clans violates Supercell's Terms of Service and may result in a ban. Use at your own risk.
 
+## Security
+
+> 🔐 **A full security audit has been conducted on this codebase.**
+>
+> The web dashboard exposes attack surface that includes known vulnerabilities. **Do not expose the dashboard to the public internet.** Run it on a local network only, behind a firewall, and set a strong `COC_BOT_SECRET` environment variable.
+>
+> **[View the full security audit report →](https://tudepi.github.io/clash-of-clans-bot/)**
+>
+> **Summary of open findings:** 3 Critical (fixed) · 5 High · 6 Medium · 8 Low · 5 Informational
+
 ## How It Works
 
 The bot connects to an Android device via ADB, takes screenshots, and uses OpenCV template matching to detect UI elements on screen. It simulates taps to automate donations, resource collection, and attacks.
