@@ -342,6 +342,18 @@
   .badge.MEDIUM   { background: var(--medium-bg); color: var(--medium-text); border: 1px solid rgba(230,184,0,0.3); }
   .badge.LOW      { background: var(--low-bg); color: var(--low-text); border: 1px solid rgba(51,204,102,0.3); }
   .badge.INFO     { background: var(--info-bg); color: var(--info-text); border: 1px solid rgba(68,136,204,0.3); }
+  .badge.FIXED    { background: #0a2d1a; color: #66e699; border: 1px solid rgba(51,204,102,0.5); margin-left: 0.5rem; }
+
+  .fix-note {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: #0a2d1a;
+    border: 1px solid rgba(51,204,102,0.3);
+    border-radius: 6px;
+    color: #66e699;
+    font-size: 0.85rem;
+  }
+  .fix-note strong { color: #88ffbb; }
 
   .finding-title {
     flex: 1;
@@ -556,6 +568,10 @@
       <div class="count">5</div>
       <div class="label">Info</div>
     </div>
+    <div class="stat-card" style="border-color:rgba(51,204,102,0.4);background:#0a2d1a">
+      <div class="count" style="color:#66e699">5</div>
+      <div class="label" style="color:#88ffbb">Fixed</div>
+    </div>
   </div>
 
   <!-- Executive Summary -->
@@ -596,6 +612,7 @@
       <div class="finding-header" onclick="toggle(this)">
         <span class="finding-id">CRIT-001</span>
         <span class="badge CRITICAL">Critical</span>
+        <span class="badge FIXED">Fixed</span>
         <span class="finding-title">Config save + strategy path traversal = remote code execution chain</span>
         <span class="finding-files">web/app.py, strategy_recorder.py</span>
         <span class="chevron">&#9660;</span>
@@ -649,6 +666,9 @@ def _safe_strategy_path(name: str) -> Path:
 
 # Also: add CSRF protection, restrict logging.file to logs/</pre>
           </div>
+          <div class="fix-note">
+            <strong>FIXED (2026-03-22):</strong> Strategy names sanitized via _safe_strategy_name() with strict regex [a-zA-Z0-9_\-] and max 64 chars. _safe_strategy_path() validates resolved path stays within strategies/ directory. Both save and replay use these safe helpers. Config save now validates logging.file is restricted to logs/ directory.
+          </div>
         </div>
       </div>
     </div>
@@ -658,6 +678,7 @@ def _safe_strategy_path(name: str) -> Path:
       <div class="finding-header" onclick="toggle(this)">
         <span class="finding-id">HIGH-001</span>
         <span class="badge HIGH">High</span>
+        <span class="badge FIXED">Fixed</span>
         <span class="finding-title">Config save endpoint allows unrestricted YAML write</span>
         <span class="finding-files">web/app.py:237-260</span>
         <span class="chevron">&#9660;</span>
@@ -686,6 +707,9 @@ with open(config_path, "w") as f:
             <h4>Remediation</h4>
             <p>Add a schema validator checking allowed keys, value types, and ranges. Restrict logging.file to within logs/. Add CSRF protection.</p>
           </div>
+          <div class="fix-note">
+            <strong>FIXED (2026-03-22):</strong> Added _validate_config_schema() that validates parsed YAML before writing. logging.file restricted to logs/ directory. safety.dry_run validated as bool, safety.max_runtime_hours as 0-168, safety.max_attacks as 0-1000, device.serial as alphanumeric with max 64 chars. Invalid configs rejected with 400.
+          </div>
         </div>
       </div>
     </div>
@@ -695,6 +719,7 @@ with open(config_path, "w") as f:
       <div class="finding-header" onclick="toggle(this)">
         <span class="finding-id">HIGH-002</span>
         <span class="badge HIGH">High</span>
+        <span class="badge FIXED">Fixed</span>
         <span class="finding-title">WebSocket logs broadcast to all connected clients</span>
         <span class="finding-files">web/app.py:122-133</span>
         <span class="chevron">&#9660;</span>
@@ -719,6 +744,9 @@ with open(config_path, "w") as f:
             <h4>Remediation</h4>
             <p>Use per-session rooms. Never emit DEBUG-level messages to the web UI.</p>
           </div>
+          <div class="fix-note">
+            <strong>FIXED (2026-03-22):</strong> WebLogHandler now filters out DEBUG-level records. All socketio.emit() calls use per-session rooms via the to= parameter. Authenticated clients join _authenticated_rooms on connect and are removed on disconnect. Background emitters iterate over authenticated rooms only.
+          </div>
         </div>
       </div>
     </div>
@@ -728,6 +756,7 @@ with open(config_path, "w") as f:
       <div class="finding-header" onclick="toggle(this)">
         <span class="finding-id">HIGH-003</span>
         <span class="badge HIGH">High</span>
+        <span class="badge FIXED">Fixed</span>
         <span class="finding-title">No session expiry — stolen cookie provides permanent access</span>
         <span class="finding-files">web/app.py:47-113</span>
         <span class="chevron">&#9660;</span>
@@ -755,6 +784,9 @@ session.clear()
 session["logged_in"] = True
 session["login_time"] = time.time()</pre>
           </div>
+          <div class="fix-note">
+            <strong>FIXED (2026-03-22):</strong> Added SESSION_PERMANENT = True and PERMANENT_SESSION_LIFETIME = timedelta(hours=8). Session is cleared and rotated on login to prevent fixation. session.permanent = True set explicitly per login.
+          </div>
         </div>
       </div>
     </div>
@@ -764,6 +796,7 @@ session["login_time"] = time.time()</pre>
       <div class="finding-header" onclick="toggle(this)">
         <span class="finding-id">HIGH-004</span>
         <span class="badge HIGH">High</span>
+        <span class="badge FIXED">Fixed</span>
         <span class="finding-title">adb shell monkey — Android shell injection if package sourced from config</span>
         <span class="finding-files">bot/core.py:323-324</span>
         <span class="chevron">&#9660;</span>
@@ -792,6 +825,9 @@ self.adb._run("shell", "am", "start",
               "-a", "android.intent.action.MAIN",
               "-c", "android.intent.category.LAUNCHER",
               "-n", f"{self._coc_package}/.MainActivity")</pre>
+          </div>
+          <div class="fix-note">
+            <strong>FIXED (2026-03-22):</strong> Replaced adb shell monkey with adb shell am start in _relog(). Uses "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n &lt;package&gt;/com.supercell.titan.GameApp" which only launches a specific activity without monkey's event injection capabilities.
           </div>
         </div>
       </div>

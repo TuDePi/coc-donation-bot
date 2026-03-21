@@ -743,6 +743,14 @@ References:
   CWE-15: External Control of System or Configuration Setting
   OWASP A05:2021 - Security Misconfiguration
 
+Status: FIXED
+Fixed Date: 2026-03-22
+Remediation: Added _validate_config_schema() to /api/config POST that validates the
+  parsed YAML before writing. logging.file is restricted to the logs/ subdirectory via
+  resolved path check. safety.dry_run must be bool, safety.max_runtime_hours must be
+  0-168, safety.max_attacks must be 0-1000, and device.serial must match
+  [a-zA-Z0-9._:\-]{1,64}. Invalid configs are rejected with a 400 response.
+
 ---
 
 [HIGH-002] WEBSOCKET LOG STREAM LEAKS FULL APPLICATION LOGS TO ALL CONNECTED CLIENTS
@@ -797,6 +805,14 @@ References:
   CWE-200: Exposure of Sensitive Information to an Unauthorized Actor
   CWE-284: Improper Access Control
 
+Status: FIXED
+Fixed Date: 2026-03-22
+Remediation: WebLogHandler now filters out DEBUG-level records (only INFO and above
+  are forwarded to the web UI). Log and stats emissions use per-session rooms instead
+  of global broadcast. Authenticated clients are added to _authenticated_rooms on
+  connect and removed on disconnect. All socketio.emit() calls target specific rooms
+  via the to= parameter. Background emitters iterate over authenticated rooms only.
+
 ---
 
 [HIGH-003] SINGLE-USER AUTHENTICATION WITH NO SESSION EXPIRY OR MFA
@@ -847,6 +863,13 @@ Remediation:
 References:
   CWE-613: Insufficient Session Expiration
   OWASP A07:2021 - Identification and Authentication Failures
+
+Status: FIXED
+Fixed Date: 2026-03-22
+Remediation: Added SESSION_PERMANENT = True and PERMANENT_SESSION_LIFETIME =
+  timedelta(hours=8) to Flask app config. On login, session is cleared first to
+  prevent session fixation, then session.permanent = True is set explicitly. Sessions
+  now expire after 8 hours of inactivity.
 
 ---
 
@@ -912,6 +935,14 @@ Remediation:
 References:
   CWE-78: OS Command Injection
   Android adb shell monkey documentation
+
+Status: FIXED
+Fixed Date: 2026-03-22
+Remediation: Replaced adb shell monkey with adb shell am start in _relog() method.
+  The new command uses "am start -a android.intent.action.MAIN -c
+  android.intent.category.LAUNCHER -n <package>/com.supercell.titan.GameApp" which
+  only launches a specific activity and does not accept arbitrary event injection
+  flags like monkey does.
 
 ---
 
@@ -1031,6 +1062,14 @@ References:
   CWE-20: Improper Input Validation
   OWASP A03:2021 - Injection
   OWASP A01:2021 - Broken Access Control
+
+Status: FIXED
+Fixed Date: 2026-03-22
+Remediation: Strategy names are sanitized via _safe_strategy_name() (strict regex
+  [a-zA-Z0-9_\-], max 64 chars) and _safe_strategy_path() resolves and validates the
+  path stays within STRATEGIES_DIR. Both save (stop_recording) and replay functions use
+  these safe helpers. Config save now validates logging.file is restricted to logs/
+  directory via _validate_config_schema(), blocking the log-redirection exploit path.
 
 ================================================================================
 REMEDIATION PRIORITY MATRIX

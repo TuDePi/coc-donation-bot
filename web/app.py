@@ -1,15 +1,17 @@
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
+from datetime import timedelta
 from functools import wraps
 from pathlib import Path
 
 import yaml
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
-from flask_socketio import SocketIO, disconnect
+from flask_socketio import SocketIO, disconnect, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from bot.config_loader import load_config
@@ -39,6 +41,11 @@ if not _secret:
         "\"import secrets; print(secrets.token_hex(32))\")."
     )
 app.config["SECRET_KEY"] = _secret
+
+# HIGH-003 fix: enforce session expiry (8 hours) so stolen cookies do not grant permanent access
+app.config["SESSION_PERMANENT"] = True
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
+
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 
@@ -84,7 +91,11 @@ def login():
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         if username == user["username"] and check_password_hash(user["password_hash"], password):
+            # HIGH-003 fix: rotate session on login to prevent session fixation
+            session.clear()
             session["logged_in"] = True
+            session["login_time"] = time.time()
+            session.permanent = True
             return redirect(url_for("index"))
         error = "Invalid username or password."
     return render_template("login.html", signup=False, error=error)
@@ -120,17 +131,30 @@ config_path = "config.yaml"
 log_buffer = []
 MAX_LOG_LINES = 200
 
+# HIGH-002 fix: track authenticated session rooms so we emit only to them
+_authenticated_rooms = set()
+_rooms_lock = threading.Lock()
+
 
 class WebLogHandler(logging.Handler):
-    """Captures log records and pushes them to the web UI."""
+    """Captures log records and pushes them to the web UI.
+
+    HIGH-002 fix: emit only to authenticated session rooms instead of globally.
+    Only forward INFO-level and above to the web UI (never DEBUG).
+    """
 
     def emit(self, record):
+        if record.levelno < logging.INFO:
+            return
         msg = self.format(record)
         log_buffer.append(msg)
         if len(log_buffer) > MAX_LOG_LINES:
             log_buffer.pop(0)
         try:
-            socketio.emit("log", {"message": msg})
+            with _rooms_lock:
+                rooms = list(_authenticated_rooms)
+            for room in rooms:
+                socketio.emit("log", {"message": msg}, to=room)
         except Exception:
             pass
 
@@ -223,6 +247,56 @@ def _is_config_path_safe():
     return str(resolved).startswith(str(project_root) + os.sep) or resolved == project_root
 
 
+def _validate_config_schema(parsed):
+    """HIGH-001 fix: validate config structure and restrict dangerous values.
+
+    Returns a list of error strings. Empty list means valid.
+    """
+    errors = []
+    if not isinstance(parsed, dict):
+        return ["Config must be a YAML mapping (dictionary)"]
+
+    # Restrict logging.file to the logs/ subdirectory
+    logging_cfg = parsed.get("logging")
+    if isinstance(logging_cfg, dict):
+        log_file = logging_cfg.get("file")
+        if log_file is not None:
+            project_root = Path(__file__).parent.parent.resolve()
+            logs_dir = (project_root / "logs").resolve()
+            try:
+                resolved_log = (project_root / str(log_file)).resolve()
+                if not str(resolved_log).startswith(str(logs_dir) + os.sep) and resolved_log != logs_dir:
+                    errors.append(
+                        f"logging.file must be within the logs/ directory, "
+                        f"got: {log_file}"
+                    )
+            except Exception:
+                errors.append("logging.file contains an invalid path")
+
+    # Validate safety section types and ranges
+    safety_cfg = parsed.get("safety")
+    if isinstance(safety_cfg, dict):
+        if "dry_run" in safety_cfg and not isinstance(safety_cfg["dry_run"], bool):
+            errors.append("safety.dry_run must be a boolean")
+        if "max_runtime_hours" in safety_cfg:
+            val = safety_cfg["max_runtime_hours"]
+            if not isinstance(val, (int, float)) or val < 0 or val > 168:
+                errors.append("safety.max_runtime_hours must be a number between 0 and 168")
+        if "max_attacks" in safety_cfg:
+            val = safety_cfg["max_attacks"]
+            if not isinstance(val, int) or val < 0 or val > 1000:
+                errors.append("safety.max_attacks must be an integer between 0 and 1000")
+
+    # Validate device.serial is a reasonable string (alphanumeric, colons, dots, hyphens)
+    device_cfg = parsed.get("device")
+    if isinstance(device_cfg, dict):
+        serial = device_cfg.get("serial")
+        if serial is not None and not re.match(r'^[a-zA-Z0-9._:\-]{1,64}$', str(serial)):
+            errors.append("device.serial must be alphanumeric (with . : - _), max 64 chars")
+
+    return errors
+
+
 @app.route("/api/config", methods=["GET"])
 @login_required
 def api_config_get():
@@ -245,8 +319,14 @@ def api_config_save():
         return jsonify({"error": "Config path is outside the project directory"}), 403
     try:
         new_config_text = request.json.get("config", "")
-        # Validate YAML
-        yaml.safe_load(new_config_text)
+        # Validate YAML syntax
+        parsed = yaml.safe_load(new_config_text)
+
+        # HIGH-001 fix: validate config schema before writing
+        schema_errors = _validate_config_schema(parsed)
+        if schema_errors:
+            return jsonify({"error": "Config validation failed", "details": schema_errors}), 400
+
         with open(config_path, "w") as f:
             f.write(new_config_text)
 
@@ -364,25 +444,31 @@ def api_strategy_replay():
 # ---------- SocketIO background tasks ----------
 
 def background_stats_emitter():
-    """Push stats to all clients every 2 seconds."""
+    """Push stats to authenticated clients every 2 seconds."""
     while True:
         socketio.sleep(2)
         if bot:
             try:
-                socketio.emit("stats", bot.get_stats())
+                with _rooms_lock:
+                    rooms = list(_authenticated_rooms)
+                for room in rooms:
+                    socketio.emit("stats", bot.get_stats(), to=room)
             except Exception:
                 pass
 
 
 def background_screenshot_emitter():
-    """Push cached screenshot to all clients every second. Never blocks on ADB."""
+    """Push cached screenshot to authenticated clients every second. Never blocks on ADB."""
     while True:
         socketio.sleep(1)
         if bot:
             try:
                 img = bot.get_screenshot_base64(allow_fresh=False)
                 if img:
-                    socketio.emit("screenshot", {"image": img})
+                    with _rooms_lock:
+                        rooms = list(_authenticated_rooms)
+                    for room in rooms:
+                        socketio.emit("screenshot", {"image": img}, to=room)
             except Exception:
                 pass
 
@@ -392,9 +478,22 @@ def on_connect():
     if not app.config.get("TEST_MODE") and not session.get("logged_in"):
         disconnect()
         return
-    logger.info("Web client connected")
+    # HIGH-002 fix: join authenticated room so emits are scoped to this session
+    sid = request.sid
+    join_room(sid)
+    with _rooms_lock:
+        _authenticated_rooms.add(sid)
+    logger.info("Web client connected (sid=%s)", sid)
     if bot:
-        socketio.emit("stats", bot.get_stats())
+        socketio.emit("stats", bot.get_stats(), to=sid)
+
+
+@socketio.on("disconnect")
+def on_disconnect():
+    sid = request.sid
+    with _rooms_lock:
+        _authenticated_rooms.discard(sid)
+    logger.info("Web client disconnected (sid=%s)", sid)
 
 
 @app.route("/api/coc/proxy", methods=["POST"])

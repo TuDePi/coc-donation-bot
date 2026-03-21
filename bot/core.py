@@ -323,9 +323,11 @@ class Bot:
         if not self.running:
             return
 
-        # Reopen CoC
-        self.adb._run("shell", "monkey", "-p", self._coc_package, "-c",
-                       "android.intent.category.LAUNCHER", "1")
+        # Reopen CoC using am start (safer than monkey, no shell injection risk)
+        self.adb._run("shell", "am", "start",
+                       "-a", "android.intent.action.MAIN",
+                       "-c", "android.intent.category.LAUNCHER",
+                       "-n", f"{self._coc_package}/com.supercell.titan.GameApp")
         logger.info("CoC reopening. Waiting for game to load...")
 
         # Wait for game to fully load (30-45s)

@@ -1,11 +1,29 @@
 import json
 import logging
 import os
+import re
 import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 STRATEGIES_DIR = "strategies"
+
+
+def _safe_strategy_name(name: str) -> str:
+    """Sanitize strategy name to alphanumeric, hyphens, and underscores only."""
+    clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(name))[:64]
+    return clean or "default"
+
+
+def _safe_strategy_path(name: str) -> Path:
+    """Return a resolved path within STRATEGIES_DIR, raising on traversal attempts."""
+    base = Path(STRATEGIES_DIR).resolve()
+    safe_name = _safe_strategy_name(name)
+    candidate = (base / f"{safe_name}.json").resolve()
+    if not str(candidate).startswith(str(base) + os.sep):
+        raise ValueError("Path traversal attempt detected in strategy name")
+    return candidate
 
 
 class StrategyRecorder:
@@ -50,9 +68,10 @@ class StrategyRecorder:
             logger.warning("No taps recorded")
             return None
 
-        filepath = os.path.join(STRATEGIES_DIR, f"{name}.json")
+        safe_name = _safe_strategy_name(name)
+        filepath = str(_safe_strategy_path(name))
         strategy = {
-            "name": name,
+            "name": safe_name,
             "recorded_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "duration": round(time.time() - self._start_time, 1),
             "resolution": list(self.adb.get_resolution()),
@@ -63,7 +82,7 @@ class StrategyRecorder:
             json.dump(strategy, f, indent=2)
 
         logger.info("Strategy '%s' saved: %d taps, %.1fs duration",
-                     name, len(self._events), strategy["duration"])
+                     safe_name, len(self._events), strategy["duration"])
         return filepath
 
     @property
@@ -72,9 +91,10 @@ class StrategyRecorder:
 
     def replay(self, name="default"):
         """Replay a saved strategy."""
-        filepath = os.path.join(STRATEGIES_DIR, f"{name}.json")
+        safe_name = _safe_strategy_name(name)
+        filepath = str(_safe_strategy_path(name))
         if not os.path.exists(filepath):
-            logger.error("Strategy '%s' not found at %s", name, filepath)
+            logger.error("Strategy '%s' not found at %s", safe_name, filepath)
             return False
 
         with open(filepath, "r") as f:
