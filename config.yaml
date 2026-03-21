@@ -18,7 +18,9 @@ timing:
 # Template matching
 vision:
   default_threshold: 0.80
-  overrides: {}              # per-template overrides, e.g. gold_mine_ready: 0.75
+  overrides:
+    attack_button: 0.65
+    barbarian: 0.65
 
 # Resource collection
 collector:
@@ -30,8 +32,6 @@ training:
   enabled: false
   army:
     barbarian: 50
-    archer: 50
-    goblin: 20
   spells:
     lightning: 2
     heal: 1
@@ -41,14 +41,15 @@ attack:
   enabled: true
   max_searches: 50           # give up after N nexts
   min_loot:
-    gold: 200000
-    elixir: 200000
+    gold: 0
+    elixir: 0
     dark_elixir: 0           # 0 = don't care
   max_trophy_target: 2500
-  deploy_strategy: "spread"  # spam_one_side, spread, surgical
+  deploy_strategy: "targeted"  # spam_one_side, spread, surgical, funnel, targeted
   deploy_side: "bottom"      # top, bottom, left, right
   use_heroes: false
   hero_deploy_delay: 5
+  spell_deploy_delay: 1.0    # seconds between spell casts
 
 # Donations
 donations:

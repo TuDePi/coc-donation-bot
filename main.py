@@ -16,6 +16,7 @@ def main():
     parser.add_argument("--web", action="store_true", help="Start with web dashboard")
     parser.add_argument("--port", type=int, default=5000, help="Web dashboard port (default: 5000)")
     parser.add_argument("--host", default="0.0.0.0", help="Web dashboard host (default: 0.0.0.0)")
+    parser.add_argument("--test", action="store_true", help="Skip login screen for testing")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -32,8 +33,10 @@ def main():
     )
 
     if args.web:
-        from web.app import init_app, run as run_web
+        from web.app import init_app, run as run_web, app as flask_app
         init_app(args.config)
+        if args.test:
+            flask_app.config["TEST_MODE"] = True
         print(f"\n  Dashboard: http://localhost:{args.port}\n")
         run_web(host=args.host, port=args.port)
     else:

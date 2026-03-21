@@ -32,7 +32,8 @@ class Bot:
         self.adb = ADBController(serial=serial)
 
         threshold = config.vision.default_threshold if hasattr(config.vision, "default_threshold") else 0.80
-        self.vision = Vision(templates_dir="templates", default_threshold=threshold)
+        overrides = vars(config.vision.overrides) if hasattr(config.vision, "overrides") and config.vision.overrides else {}
+        self.vision = Vision(templates_dir="templates", default_threshold=threshold, threshold_overrides=overrides)
 
         self.state_machine = StateMachine(self.vision)
         self.navigator = Navigator(self.adb, self.vision, self.state_machine)
@@ -194,20 +195,26 @@ class Bot:
             "donation_history": self.donator.donation_history[-50:],
             "total_collected": self.collector.total_collected,
             "total_attacks": self.attacker.attack_count,
+            "heroes_enabled": self.attacker.use_heroes,
+            "spells_enabled": self.attacker.use_spells,
             "collecting_enabled": self.collecting_enabled,
             "device_connected": connected,
             "device_resolution": resolution,
         }
 
-    def get_screenshot_base64(self):
-        """Return last screenshot as base64 JPEG string."""
+    def get_screenshot_base64(self, allow_fresh=False):
+        """Return last screenshot as base64 JPEG string.
+        If allow_fresh=True and no cached screen exists, take a new one.
+        """
         with self._lock:
             screen = self._last_screen
 
-        if screen is None:
-            # Try to take a fresh one
+        if screen is None and allow_fresh:
             try:
                 screen = self.adb.screenshot()
+                if screen is not None:
+                    with self._lock:
+                        self._last_screen = screen
             except Exception:
                 return None
 

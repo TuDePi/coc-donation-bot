@@ -64,6 +64,8 @@ def save_user(username, password):
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        if app.config.get("TEST_MODE"):
+            return f(*args, **kwargs)
         if not session.get("logged_in"):
             return redirect(url_for("login"))
         return f(*args, **kwargs)
@@ -266,6 +268,28 @@ def api_logs():
     return jsonify({"logs": log_buffer[-100:]})
 
 
+@app.route("/api/attack/heroes/toggle", methods=["POST"])
+@login_required
+def api_heroes_toggle():
+    if bot is None:
+        return jsonify({"error": "Bot not initialized"}), 500
+    bot.attacker.use_heroes = not bot.attacker.use_heroes
+    status = "enabled" if bot.attacker.use_heroes else "disabled"
+    logger.info("Hero deployment %s", status)
+    return jsonify({"heroes_enabled": bot.attacker.use_heroes})
+
+
+@app.route("/api/attack/spells/toggle", methods=["POST"])
+@login_required
+def api_spells_toggle():
+    if bot is None:
+        return jsonify({"error": "Bot not initialized"}), 500
+    bot.attacker.use_spells = not bot.attacker.use_spells
+    status = "enabled" if bot.attacker.use_spells else "disabled"
+    logger.info("Spell deployment %s", status)
+    return jsonify({"spells_enabled": bot.attacker.use_spells})
+
+
 @app.route("/api/strategy/record/start", methods=["POST"])
 @login_required
 def api_strategy_record_start():
@@ -351,12 +375,12 @@ def background_stats_emitter():
 
 
 def background_screenshot_emitter():
-    """Push screenshot to all clients every second."""
+    """Push cached screenshot to all clients every second. Never blocks on ADB."""
     while True:
         socketio.sleep(1)
-        if bot and bot.running:
+        if bot:
             try:
-                img = bot.get_screenshot_base64()
+                img = bot.get_screenshot_base64(allow_fresh=False)
                 if img:
                     socketio.emit("screenshot", {"image": img})
             except Exception:
@@ -365,7 +389,7 @@ def background_screenshot_emitter():
 
 @socketio.on("connect")
 def on_connect():
-    if not session.get("logged_in"):
+    if not app.config.get("TEST_MODE") and not session.get("logged_in"):
         disconnect()
         return
     logger.info("Web client connected")

@@ -12,9 +12,10 @@ logger = logging.getLogger(__name__)
 class Vision:
     """OpenCV-based template matching and OCR for game screen analysis."""
 
-    def __init__(self, templates_dir="templates", default_threshold=0.80):
+    def __init__(self, templates_dir="templates", default_threshold=0.80, threshold_overrides=None):
         self.templates_dir = templates_dir
         self.default_threshold = default_threshold
+        self._threshold_overrides = threshold_overrides or {}
         self._cache = {}  # path -> grayscale image
 
     def _load_template(self, path):
@@ -62,7 +63,9 @@ class Vision:
         x, y are the center of the matched region.
         scale: resize template by this factor before matching (useful for resolution mismatches).
         """
-        threshold = threshold or self.default_threshold
+        if threshold is None:
+            key = os.path.splitext(os.path.basename(template_path))[0]
+            threshold = self._threshold_overrides.get(key, self.default_threshold)
         template = self._load_template(template_path)
         if template is None:
             return None
@@ -199,15 +202,16 @@ class Vision:
         cropped = self.crop_region(screen, region)
         gray = self._to_gray(cropped)
 
-        # Threshold to get clean black text on white background
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # CoC loot numbers are light text on dark background — invert first
+        inverted = cv2.bitwise_not(gray)
+        _, binary = cv2.threshold(inverted, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         # Scale up for better OCR accuracy
         scale = 3
         h, w = binary.shape
         binary = cv2.resize(binary, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC)
 
-        text = pytesseract.image_to_string(binary, config="--psm 7 -c tessedit_char_whitelist=0123456789,.")
+        text = pytesseract.image_to_string(binary, config="--psm 8 --oem 3 -c tessedit_char_whitelist=0123456789,.")
         text = text.strip().replace(",", "").replace(".", "").replace(" ", "")
 
         if text.isdigit():

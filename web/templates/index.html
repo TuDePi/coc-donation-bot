@@ -40,6 +40,10 @@
                     <button id="btn-attack" class="btn btn-attack" onclick="startBot('attack')">ATTACK</button>
                     <button id="btn-stop" class="btn btn-stop" onclick="stopBot()" disabled>STOP</button>
                 </div>
+                <div class="control-buttons" style="margin-top: 8px;">
+                    <button id="btn-heroes" class="btn btn-small" onclick="toggleHeroes()">Heroes: Disabled</button>
+                    <button id="btn-spells" class="btn btn-small" onclick="toggleSpells()">Spells: Disabled</button>
+                </div>
                 <div id="mode-indicator" class="mode-indicator"></div>
             </div>
 
@@ -238,6 +242,22 @@
             }
         }
 
+        async function toggleHeroes() {
+            const res = await fetch('/api/attack/heroes/toggle', { method: 'POST' });
+            const data = await res.json();
+            const enabled = data.heroes_enabled;
+            document.getElementById('btn-heroes').textContent = 'Heroes: ' + (enabled ? 'Enabled' : 'Disabled');
+            appendLog('[WEB] Hero deployment ' + (enabled ? 'enabled' : 'disabled'));
+        }
+
+        async function toggleSpells() {
+            const res = await fetch('/api/attack/spells/toggle', { method: 'POST' });
+            const data = await res.json();
+            const enabled = data.spells_enabled;
+            document.getElementById('btn-spells').textContent = 'Spells: ' + (enabled ? 'Enabled' : 'Disabled');
+            appendLog('[WEB] Spell deployment ' + (enabled ? 'enabled' : 'disabled'));
+        }
+
         async function refreshScreenshot() {
             try {
                 const res = await fetch('/api/screenshot');
@@ -310,6 +330,10 @@
             document.getElementById('btn-collect').disabled = data.running;
             document.getElementById('btn-attack').disabled = data.running;
             document.getElementById('btn-stop').disabled = !data.running;
+            if (data.heroes_enabled !== undefined)
+                document.getElementById('btn-heroes').textContent = 'Heroes: ' + (data.heroes_enabled ? 'Enabled' : 'Disabled');
+            if (data.spells_enabled !== undefined)
+                document.getElementById('btn-spells').textContent = 'Spells: ' + (data.spells_enabled ? 'Enabled' : 'Disabled');
 
             // Mode indicator
             const modeEl = document.getElementById('mode-indicator');

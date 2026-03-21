@@ -12,7 +12,7 @@ An automated Clash of Clans bot built with Python, ADB, and OpenCV for **educati
 >
 > **[View the full security audit report →](https://tudepi.github.io/clash-of-clans-bot/)**
 >
-> **Summary of open findings:** 3 Critical (fixed) · 5 High · 6 Medium · 8 Low · 5 Informational
+> **Summary of findings:** 1 Critical · 4 High · 7 Medium · 5 Low · 5 Informational
 
 ## How It Works
 
@@ -28,9 +28,14 @@ The bot connects to an Android device via ADB, takes screenshots, and uses OpenC
 
 - **Donate Mode** — opens clan chat and donates troops automatically
 - **Collect Mode** — taps ready resource collectors on the home screen
-- **Attack Mode** — searches for bases, deploys troops, and collects results
+- **Attack Mode** — searches for bases, evaluates loot via OCR, deploys troops intelligently
+- **Smart Deployment** — color-based building detection finds gold mines & elixir collectors, deploys troops near them outside the no-deploy zone
+- **Deploy Strategies** — spam, spread, surgical, funnel, or targeted (vision-guided) placement
+- **Spell & Hero Support** — deploys spells and heroes with dashboard toggles
+- **Loot Evaluation** — OCR reads gold/elixir/dark elixir and skips bases below thresholds
 - **Strategy Recorder** — record your attack taps and replay them
-- **Web Dashboard** — control and monitor from any browser with 1 FPS live view
+- **Web Dashboard** — control and monitor from any browser with live view
+- **CoC API Explorer** — browse clan/player data with server-side API proxy
 - **Authentication** — username/password login screen protects the dashboard
 - **Anti-ban** — periodic relog cycle (3-4 min) to avoid detection
 - Runs headless on a Raspberry Pi
@@ -121,6 +126,7 @@ python3 main.py
 - `--host HOST` — web dashboard host (default: 0.0.0.0)
 - `--dry-run` — takes screenshots and detects elements without tapping
 - `--debug` — enables verbose logging
+- `--test` — skip login screen for local development
 
 ## Web Dashboard
 
@@ -130,7 +136,9 @@ The web dashboard lets you control and monitor the bot from any browser on your 
 - **Live View** — 1 FPS live screenshot of the game
 - **Mode Selection** — Donate, Collect, or Attack with separate buttons
 - **Stats** — donations, collections, attacks tracked in real time
+- **Heroes & Spells Toggles** — enable/disable hero and spell deployment on the fly
 - **Strategy Recorder** — record and save attack strategies
+- **CoC API Explorer** — look up clans, players, leagues with your API key
 - **Device Info** — connection status and resolution
 
 Access it at `http://<device-ip>:8080` from any device on the same network.
@@ -183,18 +191,28 @@ Then control the bot from any browser at `http://<pi-ip>:8080`.
 │   ├── attack/              # Attack flow buttons
 │   ├── troops/              # Troop icons for deployment
 │   └── state/               # State detection indicators
-└── tools/
-    ├── capture_template.py  # Template capture tool
-    └── test_match.py        # Template testing tool
+├── tools/
+│   ├── capture_template.py  # Template capture tool
+│   ├── test_match.py        # Template testing tool
+│   ├── calibrate_regions.py # OCR region calibration
+│   ├── debug_ocr.py         # OCR debugging
+│   ├── debug_color_detect.py # Color detection debug
+│   └── debug_boundary.py    # No-deploy zone debug
+├── CHANGELOG.md             # Version history
+└── docs/
+    └── index.html           # Security audit (GitHub Pages)
 ```
 
 ## Educational Topics Covered
 
 - **Computer Vision** — template matching with OpenCV (`cv2.matchTemplate`)
+- **Color Detection** — HSV color space analysis to find buildings on screen
+- **OCR** — reading loot numbers from the game UI with pytesseract
 - **Android Automation** — controlling devices with ADB
 - **State Machines** — detecting and managing game states
-- **Image Processing** — screenshot capture, scaling, and comparison
+- **Image Processing** — screenshot capture, scaling, morphological operations
 - **Web Development** — Flask + SocketIO dashboard with live updates and session-based auth
+- **Security** — penetration testing, CSRF, path traversal, session management
 - **Networking** — remote device control over LAN
 
 ## License

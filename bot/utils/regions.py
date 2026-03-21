@@ -26,9 +26,9 @@ CHAT_BUTTON = Region(0.02, 0.55, 0.06, 0.08)
 SHOP_BUTTON = Region(0.90, 0.85, 0.08, 0.10)
 
 # --- Loot Display (during attack search) ---
-LOOT_GOLD = Region(0.58, 0.06, 0.15, 0.04)
-LOOT_ELIXIR = Region(0.58, 0.11, 0.15, 0.04)
-LOOT_DARK_ELIXIR = Region(0.58, 0.16, 0.15, 0.04)
+LOOT_GOLD = Region(0.043, 0.138, 0.116, 0.036)
+LOOT_ELIXIR = Region(0.041, 0.192, 0.118, 0.037)
+LOOT_DARK_ELIXIR = Region(0.042, 0.244, 0.120, 0.045)
 LOOT_TROPHIES = Region(0.58, 0.21, 0.15, 0.04)
 
 # --- Attack Search Screen ---
