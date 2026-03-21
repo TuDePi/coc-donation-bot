@@ -21,6 +21,7 @@ The bot connects to an Android device via ADB, takes screenshots, and uses OpenC
 - **Attack Mode** — searches for bases, deploys troops, and collects results
 - **Strategy Recorder** — record your attack taps and replay them
 - **Web Dashboard** — control and monitor from any browser with 1 FPS live view
+- **Authentication** — username/password login screen protects the dashboard
 - **Anti-ban** — periodic relog cycle (3-4 min) to avoid detection
 - Runs headless on a Raspberry Pi
 
@@ -97,7 +98,7 @@ python3 tools/test_match.py templates/ui/chat_button.png 0.6
 python3 main.py --web --port 8080
 ```
 
-Then open `http://localhost:8080` in your browser and use the Donate/Collect/Attack buttons.
+Then open `http://localhost:8080` in your browser. On first run you'll be prompted to create an account. After that, login is required to access the dashboard.
 
 **Without web dashboard:**
 ```bash
@@ -115,6 +116,7 @@ python3 main.py
 
 The web dashboard lets you control and monitor the bot from any browser on your network.
 
+- **Authentication** — on first visit you create a username/password (stored in `users.json`, gitignored). All subsequent visits require login.
 - **Live View** — 1 FPS live screenshot of the game
 - **Mode Selection** — Donate, Collect, or Attack with separate buttons
 - **Stats** — donations, collections, attacks tracked in real time
@@ -182,7 +184,7 @@ Then control the bot from any browser at `http://<pi-ip>:8080`.
 - **Android Automation** — controlling devices with ADB
 - **State Machines** — detecting and managing game states
 - **Image Processing** — screenshot capture, scaling, and comparison
-- **Web Development** — Flask + SocketIO dashboard with live updates
+- **Web Development** — Flask + SocketIO dashboard with live updates and session-based auth
 - **Networking** — remote device control over LAN
 
 ## License
