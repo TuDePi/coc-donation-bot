@@ -1,20 +1,97 @@
+import json
 import logging
 import os
 import threading
 import time
+from functools import wraps
+from pathlib import Path
 
 import yaml
-from flask import Flask, render_template, jsonify, request
-from flask_socketio import SocketIO
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
+from flask_socketio import SocketIO, disconnect
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from bot.config_loader import load_config
 from bot.core import Bot
 
+USERS_FILE = Path("users.json")
+
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
-app.config["SECRET_KEY"] = "coc-bot-secret"
+app.config["SECRET_KEY"] = os.environ.get("COC_BOT_SECRET", "coc-bot-secret-change-me")
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+
+# ---------- Auth helpers ----------
+
+def load_user():
+    if not USERS_FILE.exists():
+        return None
+    try:
+        data = json.loads(USERS_FILE.read_text())
+        return data if data.get("username") else None
+    except Exception:
+        return None
+
+
+def save_user(username, password):
+    USERS_FILE.write_text(json.dumps({
+        "username": username,
+        "password_hash": generate_password_hash(password, method="pbkdf2:sha256"),
+    }))
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ---------- Auth routes ----------
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    user = load_user()
+    if not user:
+        return redirect(url_for("signup"))
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        if username == user["username"] and check_password_hash(user["password_hash"], password):
+            session["logged_in"] = True
+            return redirect(url_for("index"))
+        error = "Invalid username or password."
+    return render_template("login.html", signup=False, error=error)
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if load_user():
+        return redirect(url_for("login"))
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+        if not username or not password:
+            error = "Username and password are required."
+        elif password != confirm:
+            error = "Passwords do not match."
+        else:
+            save_user(username, password)
+            return redirect(url_for("login"))
+    return render_template("login.html", signup=True, error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 # Global bot instance
 bot = None
@@ -62,11 +139,13 @@ def init_app(cfg_path="config.yaml"):
 # ---------- Routes ----------
 
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html")
 
 
 @app.route("/api/stats")
+@login_required
 def api_stats():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -74,6 +153,7 @@ def api_stats():
 
 
 @app.route("/api/start", methods=["POST"])
+@login_required
 def api_start():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -85,6 +165,7 @@ def api_start():
 
 
 @app.route("/api/stop", methods=["POST"])
+@login_required
 def api_stop():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -93,6 +174,7 @@ def api_stop():
 
 
 @app.route("/api/collecting/toggle", methods=["POST"])
+@login_required
 def api_collecting_toggle():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -103,6 +185,7 @@ def api_collecting_toggle():
 
 
 @app.route("/api/screenshot")
+@login_required
 def api_screenshot():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -113,6 +196,7 @@ def api_screenshot():
 
 
 @app.route("/api/config", methods=["GET"])
+@login_required
 def api_config_get():
     try:
         with open(config_path, "r") as f:
@@ -122,6 +206,7 @@ def api_config_get():
 
 
 @app.route("/api/config", methods=["POST"])
+@login_required
 def api_config_save():
     global bot
     try:
@@ -144,11 +229,13 @@ def api_config_save():
 
 
 @app.route("/api/logs")
+@login_required
 def api_logs():
     return jsonify({"logs": log_buffer[-100:]})
 
 
 @app.route("/api/strategy/record/start", methods=["POST"])
+@login_required
 def api_strategy_record_start():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -157,6 +244,7 @@ def api_strategy_record_start():
 
 
 @app.route("/api/strategy/record/stop", methods=["POST"])
+@login_required
 def api_strategy_record_stop():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -168,12 +256,14 @@ def api_strategy_record_stop():
 
 
 @app.route("/api/strategy/list")
+@login_required
 def api_strategy_list():
     from bot.actions.strategy_recorder import StrategyRecorder
     return jsonify({"strategies": StrategyRecorder.list_strategies()})
 
 
 @app.route("/api/strategy/tap", methods=["POST"])
+@login_required
 def api_strategy_tap():
     """Record a tap during strategy recording, and also send it to the device."""
     if bot is None:
@@ -189,6 +279,7 @@ def api_strategy_tap():
 
 
 @app.route("/api/strategy/active", methods=["POST"])
+@login_required
 def api_strategy_active():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -199,6 +290,7 @@ def api_strategy_active():
 
 
 @app.route("/api/strategy/replay", methods=["POST"])
+@login_required
 def api_strategy_replay():
     if bot is None:
         return jsonify({"error": "Bot not initialized"}), 500
@@ -235,6 +327,9 @@ def background_screenshot_emitter():
 
 @socketio.on("connect")
 def on_connect():
+    if not session.get("logged_in"):
+        disconnect()
+        return
     logger.info("Web client connected")
     if bot:
         socketio.emit("stats", bot.get_stats())
