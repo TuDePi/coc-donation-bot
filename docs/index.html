@@ -1373,31 +1373,61 @@ def login(): ...</pre>
 
   <!-- Previous Fixes Assessment -->
   <div class="section-header">
-    <h2>Previous Fix Assessment</h2>
+    <h2>Fix Assessment</h2>
   </div>
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Fix</th><th>Issue</th><th>Status</th><th>Notes</th></tr>
+        <tr><th>ID</th><th>Issue</th><th>Status</th><th>Notes</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">CRIT-001</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">CRIT-001 (orig)</td>
           <td>Hardcoded SECRET_KEY</td>
-          <td><span class="status-ok">ADEQUATE</span></td>
-          <td>Random ephemeral key is correct. No regression.</td>
+          <td><span class="status-ok">FIXED</span></td>
+          <td>Random ephemeral key generation is correct. No regression.</td>
+        </tr>
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">CRIT-001 (new)</td>
+          <td>Strategy path traversal + config write RCE chain</td>
+          <td><span class="status-ok">FIXED</span></td>
+          <td>Strategy names sanitized with strict <code>[a-zA-Z0-9_\-]</code> regex and resolved-path validation in both save and replay. Config schema validation closes the log-redirect exploit path.</td>
         </tr>
         <tr>
           <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">CRIT-002</td>
           <td>ADB command injection via coordinates</td>
-          <td><span class="status-ok">ADEQUATE</span></td>
-          <td>int() casting + range validation is sound. No bypass found.</td>
+          <td><span class="status-ok">FIXED</span></td>
+          <td>int() casting + 0–4096 range validation is sound. No bypass found.</td>
         </tr>
         <tr>
           <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">CRIT-003</td>
           <td>Path traversal in config read/write</td>
-          <td><span class="status-part">PARTIAL</span></td>
-          <td>Config path is validated, but strategy file operations (MED-003/004) remain unaddressed.</td>
+          <td><span class="status-ok">FIXED</span></td>
+          <td>Config path validated against project root. Strategy path traversal (previously partial gap) now also closed by _safe_strategy_path().</td>
+        </tr>
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">HIGH-001</td>
+          <td>Unrestricted YAML config write</td>
+          <td><span class="status-ok">FIXED</span></td>
+          <td>YAML schema validator added — checks allowed keys, value types, and ranges. <code>logging.file</code> restricted to the <code>logs/</code> directory.</td>
+        </tr>
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">HIGH-002</td>
+          <td>WebSocket logs broadcast to all clients</td>
+          <td><span class="status-ok">FIXED</span></td>
+          <td>Per-session rooms implemented. Logs emitted only to authenticated rooms. DEBUG-level messages filtered out of the web UI.</td>
+        </tr>
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">HIGH-003</td>
+          <td>No session expiry</td>
+          <td><span class="status-ok">FIXED</span></td>
+          <td>Sessions expire after 8 hours via <code>PERMANENT_SESSION_LIFETIME</code>. Session is cleared on login to prevent session fixation.</td>
+        </tr>
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem">HIGH-004</td>
+          <td>adb shell monkey — Android shell injection</td>
+          <td><span class="status-ok">FIXED</span></td>
+          <td>Replaced <code>adb shell monkey</code> with <code>adb shell am start</code> to eliminate shell injection vector.</td>
         </tr>
       </tbody>
     </table>
